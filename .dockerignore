@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+server/data
+*.db
+README.md
+.cursor
+.idea
+.vscode

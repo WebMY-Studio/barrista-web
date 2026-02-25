@@ -128,6 +128,21 @@ npm run start
 
 Open **http://localhost:3001** — both the admin UI and API are served from one port. SQLite DB: `server/data/barrista_en.db` (and other `barrista_XX.db` files per language).
 
+## Deploy on Railway
+
+1. Push the repo to GitHub and open [Railway](https://railway.app).
+2. **New Project** → **Deploy from GitHub repo** → choose this repo.
+3. Railway will detect the **Dockerfile** and build the image (frontend is built inside the image, then the Node server serves it and the API).
+4. In the service **Variables** tab, set:
+   - `ADMIN_USER` — login
+   - `ADMIN_PASSWORD` — password
+   - `JWT_SECRET` — long random string for JWT
+   - Optionally: `JWT_EXPIRES_IN` (default `7d`).
+5. In **Settings** → **Networking** → **Generate Domain** to get a public URL.
+6. Open the generated URL — you get the admin UI and API on the same origin (no `VITE_API_URL` needed).
+
+The app uses `PORT` set by Railway. SQLite files live in `server/data`; if Railway provides a persistent disk for the service, data will survive restarts.
+
 ## Tech stack
 
 - React 18, TypeScript, Vite, Lucide React, React Router
