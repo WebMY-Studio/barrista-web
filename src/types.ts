@@ -1,0 +1,36 @@
+export interface Ingredient {
+  title: string;
+  volume: string;
+}
+
+export interface Drink {
+  id: string;
+  title: string;
+  ingredients: Ingredient[];
+  instructions: string[];
+  dishId: string;
+  portionsAmount: number;
+  categories: string[];
+}
+
+export interface DrinkTranslation {
+  title: string;
+  instructions: string[];
+  ingredients: Array<{
+    title: string;
+    volume: string;
+  }>;
+}
+
+export interface Dish {
+  id: string;
+  title: string;
+  description: string;
+  volume: string;
+}
+
+export interface ItemCategory {
+  id: string;
+  title: string;
+  drinksCount: number;
+}
