@@ -2,11 +2,14 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
+import multer from 'multer';
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
 import { sanitizeDrink } from './sanitize.js';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
@@ -264,6 +267,89 @@ app.get('/api/export-db', (req, res) => {
   res.download(path, filename, (err) => {
     if (err) console.error(err);
   });
+});
+
+app.post('/api/import-json', upload.single('file'), (req, res) => {
+  if (!req.file || !req.file.buffer) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+  let data;
+  try {
+    data = JSON.parse(req.file.buffer.toString('utf8'));
+  } catch (err) {
+    return res.status(400).json({ error: 'Invalid JSON' });
+  }
+  const drinks = Array.isArray(data.drinks) ? data.drinks : [];
+  const dishes = Array.isArray(data.dishes) ? data.dishes : [];
+  const categories = Array.isArray(data.categories) ? data.categories : [];
+  let lang = (req.body && req.body.lang) ? String(req.body.lang).trim().toLowerCase() : (data.language || 'en');
+  if (!/^[a-z]{2,}$/.test(lang)) lang = 'en';
+  const targetPath = getDbPathForLang(lang);
+  try {
+    const importDb = new Database(targetPath);
+    importDb.exec(`
+      CREATE TABLE IF NOT EXISTS drinks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        ingredients TEXT NOT NULL,
+        instructions TEXT NOT NULL,
+        dish_id TEXT NOT NULL,
+        portions_amount INTEGER NOT NULL,
+        categories TEXT NOT NULL
+      )
+    `);
+    importDb.exec(`
+      CREATE TABLE IF NOT EXISTS dishes (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        volume TEXT NOT NULL
+      )
+    `);
+    importDb.exec(`
+      CREATE TABLE IF NOT EXISTS categories (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL
+      )
+    `);
+    importDb.exec('DELETE FROM drinks');
+    importDb.exec('DELETE FROM dishes');
+    importDb.exec('DELETE FROM categories');
+    const insCat = importDb.prepare('INSERT OR REPLACE INTO categories (id, title) VALUES (?, ?)');
+    for (const c of categories) {
+      const id = String(c.id ?? '').trim() || undefined;
+      const title = String(c.title ?? '').trim();
+      if (id) insCat.run(id, title);
+    }
+    const insDish = importDb.prepare('INSERT OR REPLACE INTO dishes (id, title, description, volume) VALUES (?, ?, ?, ?)');
+    for (const d of dishes) {
+      const id = String(d.id ?? '').trim();
+      if (id) insDish.run(id, d.title ?? '', d.description ?? '', d.volume ?? '');
+    }
+    const insDrink = importDb.prepare(`
+      INSERT OR REPLACE INTO drinks (id, title, ingredients, instructions, dish_id, portions_amount, categories)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const d of drinks) {
+      const clean = sanitizeDrink(d);
+      if (clean.id) {
+        insDrink.run(
+          clean.id,
+          clean.title,
+          JSON.stringify(clean.ingredients || []),
+          JSON.stringify(clean.instructions || []),
+          clean.dishId || '',
+          clean.portionsAmount ?? 1,
+          JSON.stringify(clean.categories || [])
+        );
+      }
+    }
+    importDb.close();
+    res.json({ ok: true, lang, imported: { drinks: drinks.length, dishes: dishes.length, categories: categories.length } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/export-json', (req, res) => {

@@ -1,13 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Coffee, UtensilsCrossed, Tags, Download, Loader } from 'lucide-react';
-import { getAvailableLanguages, downloadDbFile, downloadJsonForLanguage } from '../services/api';
+import { Coffee, UtensilsCrossed, Tags, Download, Loader, Upload } from 'lucide-react';
+import { getAvailableLanguages, downloadDbFile, downloadJsonForLanguage, importJson } from '../services/api';
 
 export function Dashboard() {
   const [languages, setLanguages] = useState<{ code: string }[]>([]);
   const [selectedLangs, setSelectedLangs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState<'db' | 'json' | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importLang, setImportLang] = useState('en');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     getAvailableLanguages()
@@ -61,12 +64,57 @@ export function Dashboard() {
     }
   };
 
+  const handleImportClick = () => fileInputRef.current?.click();
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      await importJson(file, importLang);
+      await getAvailableLanguages().then(setLanguages);
+      e.target.value = '';
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Failed to import JSON');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="dashboard">
       <h2>Home</h2>
       <div className="dashboard-actions">
-        <button type="button" onClick={() => downloadDbFile()} className="btn-secondary">
-          <Download size={16} /> Download main SQLite database (EN)
+        <label className="dashboard-import-lang">
+          Import as:
+          <select
+            value={importLang}
+            onChange={(e) => setImportLang(e.target.value)}
+            disabled={importing}
+          >
+            <option value="en">Main (en)</option>
+            {languages.filter((l) => l.code !== 'en').map((l) => (
+              <option key={l.code} value={l.code}>{l.code}</option>
+            ))}
+          </select>
+        </label>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          className="dashboard-file-input"
+          onChange={handleFileChange}
+          disabled={importing}
+        />
+        <button
+          type="button"
+          onClick={handleImportClick}
+          disabled={importing}
+          className="btn-secondary"
+        >
+          {importing ? <Loader size={16} className="spinner" /> : <Upload size={16} />}
+          Import JSON
         </button>
       </div>
       <div className="dashboard-languages">
@@ -110,7 +158,7 @@ export function Dashboard() {
                 className="btn-primary"
               >
                 {exporting === 'json' ? <Loader size={16} className="spinner" /> : <Download size={16} />}
-                Export JSONs for selected languages
+                Export JSON for selected languages
               </button>
             </div>
           </>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Dish } from '../types';
 import { getAllDishes, saveDish, deleteDish } from '../services/api';
-import { Plus, Edit, Trash2, Download } from 'lucide-react';
+import { Plus, Edit, Trash2 } from 'lucide-react';
 
 export function DishesPage() {
   const [dishes, setDishes] = useState<Dish[]>([]);
@@ -54,16 +54,6 @@ export function DishesPage() {
     }
   };
 
-  const handleExportJson = () => {
-    const blob = new Blob([JSON.stringify({ dishes, exportedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `dishes-export-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <div className="page-content page-dishes">
       <div className="toolbar">
@@ -76,9 +66,6 @@ export function DishesPage() {
           className="btn-primary"
         >
           <Plus size={18} /> Add dish
-        </button>
-        <button type="button" onClick={handleExportJson} disabled={dishes.length === 0} className="btn-primary">
-          <Download size={16} /> Export JSON
         </button>
       </div>
 

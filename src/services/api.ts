@@ -129,10 +129,31 @@ export async function downloadJsonForLanguage(lang: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to export JSON');
   const data = await res.json();
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const name = lang === 'en' ? `barrista_export.json` : `barrista_${lang}_export.json`;
+  const name = `barrista_export_${lang}.json`;
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+/** Upload a JSON export file to import into barrista_<lang>.db (default lang = en). */
+export async function importJson(file: File, lang: string = 'en'): Promise<{ ok: boolean; lang: string; imported?: { drinks: number; dishes: number; categories: number } }> {
+  const base = getBase().replace(/\/$/, '');
+  const form = new FormData();
+  form.append('file', file);
+  form.append('lang', lang);
+  const res = await fetch(`${base}/api/import-json`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: form,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event('auth-logout'));
+    throw new Error('Unauthorized');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Import failed');
+  return data;
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ItemCategory } from '../types';
 import { getAllCategories, saveCategory, deleteCategory } from '../services/api';
-import { Plus, Edit, Trash2, Download } from 'lucide-react';
+import { Plus, Edit, Trash2 } from 'lucide-react';
 
 export function CategoriesPage() {
   const [categories, setCategories] = useState<ItemCategory[]>([]);
@@ -51,16 +51,6 @@ export function CategoriesPage() {
     }
   };
 
-  const handleExportJson = () => {
-    const blob = new Blob([JSON.stringify({ categories, exportedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `categories-export-${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <div className="page-content page-categories">
       <div className="toolbar">
@@ -73,9 +63,6 @@ export function CategoriesPage() {
           className="btn-primary"
         >
           <Plus size={18} /> Add category
-        </button>
-        <button type="button" onClick={handleExportJson} disabled={categories.length === 0} className="btn-primary">
-          <Download size={16} /> Export JSON
         </button>
       </div>
 
