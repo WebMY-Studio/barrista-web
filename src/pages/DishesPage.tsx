@@ -1,7 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent, type FormEvent } from 'react';
 import { Dish } from '../types';
-import { getAllDishes, saveDish, deleteDish } from '../services/api';
-import { Plus, Edit, Trash2 } from 'lucide-react';
+import { getAllDishes, saveDish, deleteDish, getDishImageUrl, uploadDishPhoto } from '../services/api';
+import { Plus, Edit, Trash2, Upload, Loader } from 'lucide-react';
+
+const DISH_PLACEHOLDER = "data:image/svg+xml," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="88" height="88" viewBox="0 0 88 88"><rect width="88" height="88" fill="#e8e8e8"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#999" font-size="11" font-family="sans-serif">No photo</text></svg>'
+);
 
 export function DishesPage() {
   const [dishes, setDishes] = useState<Dish[]>([]);
@@ -9,6 +13,9 @@ export function DishesPage() {
   const [editing, setEditing] = useState<Dish | undefined>();
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<Dish>({ id: '', title: '', description: '', volume: '' });
+  const [photoKey, setPhotoKey] = useState(0);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     getAllDishes()
@@ -26,7 +33,23 @@ export function DishesPage() {
     if (showForm) window.scrollTo(0, 0);
   }, [showForm]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handlePhotoChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !form.id) return;
+    setUploadingPhoto(true);
+    try {
+      await uploadDishPhoto(form.id, file);
+      setPhotoKey((k) => k + 1);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Failed to upload photo');
+    } finally {
+      setUploadingPhoto(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     try {
       await saveDish(form);
@@ -104,6 +127,36 @@ export function DishesPage() {
                 onChange={(e) => setForm({ ...form, volume: e.target.value })}
               />
             </div>
+            {form.id && (
+              <div className="form-group form-group-photo">
+                <label>Photo</label>
+                <div className="drink-form-photo">
+                  <img
+                    src={getDishImageUrl(form.id) + (photoKey ? `?t=${photoKey}` : '')}
+                    alt=""
+                    className="drink-form-photo-preview"
+                    onError={(e) => { e.currentTarget.src = DISH_PLACEHOLDER; }}
+                  />
+                  <input
+                    ref={photoInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="drink-form-photo-input"
+                    onChange={handlePhotoChange}
+                    disabled={uploadingPhoto}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => photoInputRef.current?.click()}
+                    disabled={uploadingPhoto}
+                    className="btn-secondary drink-form-photo-btn"
+                  >
+                    {uploadingPhoto ? <Loader size={16} className="spinner" /> : <Upload size={16} />}
+                    {uploadingPhoto ? 'Uploading…' : 'Upload photo'}
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="form-actions">
               <button type="submit" className="btn-primary">
                 Save
@@ -132,6 +185,12 @@ export function DishesPage() {
           ) : (
             dishes.map((d) => (
               <div key={d.id} className="dish-card">
+                <img
+                  src={getDishImageUrl(d.id)}
+                  alt=""
+                  className="dish-card-image"
+                  onError={(e) => { e.currentTarget.src = DISH_PLACEHOLDER; }}
+                />
                 <div className="dish-card-main">
                   <span className="dish-id">{d.id}</span>
                   <h3 className="dish-title">{d.title}</h3>

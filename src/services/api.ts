@@ -1,4 +1,4 @@
-import { Drink, Dish, ItemCategory } from '../types';
+import { Drink, Dish, ItemCategory, BrewMethod } from '../types';
 import { TOKEN_KEY } from '../constants/auth';
 
 const API_BASE =
@@ -60,6 +60,118 @@ export async function deleteDrink(id: string): Promise<void> {
   await fetchApi(`/api/drinks/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
+/** URL for drink photo (server serves drink_<id>.jpg from /uploads). Use img onError for placeholder. */
+export function getDrinkImageUrl(id: string): string {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const path = `/uploads/drink_${encodeURIComponent(id)}.jpg`;
+  return base ? `${base}${path}` : path;
+}
+
+export async function uploadDrinkPhoto(drinkId: string, file: File): Promise<void> {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const form = new FormData();
+  form.append('photo', file);
+  const res = await fetch(`${base}/api/drinks/${encodeURIComponent(drinkId)}/photo`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: form,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event('auth-logout'));
+    throw new Error('Unauthorized');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Upload failed');
+}
+
+/** Import multiple drink images (filenames must be drink_<id>.jpg). */
+export async function importDrinkImages(files: File[]): Promise<{ saved: number; total: number }> {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const form = new FormData();
+  for (const f of files) form.append('images', f);
+  const res = await fetch(`${base}/api/import-drink-images`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: form,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event('auth-logout'));
+    throw new Error('Unauthorized');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Import failed');
+  return { saved: data.saved ?? 0, total: data.total ?? 0 };
+}
+
+/** Download all drink and category images as a ZIP. */
+export async function downloadAllImages(): Promise<void> {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const res = await fetch(`${base}/api/download-all-images`, { headers: getAuthHeaders() });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event('auth-logout'));
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Download failed');
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'barrista-images.zip';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** URL for category photo (server serves category_<id>.png from /uploads). Use img onError for placeholder. */
+export function getCategoryImageUrl(id: string): string {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const path = `/uploads/category_${encodeURIComponent(id)}.png`;
+  return base ? `${base}${path}` : path;
+}
+
+export async function uploadCategoryPhoto(categoryId: string, file: File): Promise<void> {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const form = new FormData();
+  form.append('photo', file);
+  const res = await fetch(`${base}/api/categories/${encodeURIComponent(categoryId)}/photo`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: form,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event('auth-logout'));
+    throw new Error('Unauthorized');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Upload failed');
+}
+
+/** Import multiple category images (filenames must be category_<id>.png or .jpg). */
+export async function importCategoryImages(files: File[]): Promise<{ saved: number; total: number }> {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const form = new FormData();
+  for (const f of files) form.append('images', f);
+  const res = await fetch(`${base}/api/import-category-images`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: form,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event('auth-logout'));
+    throw new Error('Unauthorized');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Import failed');
+  return { saved: data.saved ?? 0, total: data.total ?? 0 };
+}
+
 export async function getAllDishes(): Promise<Dish[]> {
   const res = await fetchApi('/api/dishes');
   return res.json();
@@ -73,6 +185,51 @@ export async function deleteDish(id: string): Promise<void> {
   await fetchApi(`/api/dishes/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
+/** URL for dish photo (server serves dish_<id>.png from /uploads). Use img onError for placeholder. */
+export function getDishImageUrl(id: string): string {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const path = `/uploads/dish_${encodeURIComponent(id)}.png`;
+  return base ? `${base}${path}` : path;
+}
+
+export async function uploadDishPhoto(dishId: string, file: File): Promise<void> {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const form = new FormData();
+  form.append('photo', file);
+  const res = await fetch(`${base}/api/dishes/${encodeURIComponent(dishId)}/photo`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: form,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event('auth-logout'));
+    throw new Error('Unauthorized');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Upload failed');
+}
+
+/** Import multiple dish images (filenames must be dish_<id>.png or .jpg). */
+export async function importDishImages(files: File[]): Promise<{ saved: number; total: number }> {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const form = new FormData();
+  for (const f of files) form.append('images', f);
+  const res = await fetch(`${base}/api/import-dish-images`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: form,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event('auth-logout'));
+    throw new Error('Unauthorized');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Import failed');
+  return { saved: data.saved ?? 0, total: data.total ?? 0 };
+}
+
 export async function getAllCategories(): Promise<ItemCategory[]> {
   const res = await fetchApi('/api/categories');
   return res.json();
@@ -84,6 +241,64 @@ export async function saveCategory(cat: { id: string; title: string }): Promise<
 
 export async function deleteCategory(id: string): Promise<void> {
   await fetchApi(`/api/categories/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function getAllBrewMethods(): Promise<BrewMethod[]> {
+  const res = await fetchApi('/api/brew-methods');
+  return res.json();
+}
+
+export async function saveBrewMethod(method: BrewMethod): Promise<void> {
+  await fetchApi('/api/brew-methods', { method: 'POST', body: JSON.stringify(method) });
+}
+
+export async function deleteBrewMethod(id: string): Promise<void> {
+  await fetchApi(`/api/brew-methods/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/** URL for brew method photo (server serves brew_<id>.png from /uploads). */
+export function getBrewMethodImageUrl(id: string): string {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const path = `/uploads/brew_${encodeURIComponent(id)}.png`;
+  return base ? `${base}${path}` : path;
+}
+
+export async function uploadBrewMethodPhoto(methodId: string, file: File): Promise<void> {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const form = new FormData();
+  form.append('photo', file);
+  const res = await fetch(`${base}/api/brew-methods/${encodeURIComponent(methodId)}/photo`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: form,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event('auth-logout'));
+    throw new Error('Unauthorized');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Upload failed');
+}
+
+/** Import multiple brew method images (filenames must be brew_<id>.png or .jpg). */
+export async function importBrewMethodImages(files: File[]): Promise<{ saved: number; total: number }> {
+  const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
+  const form = new FormData();
+  for (const f of files) form.append('images', f);
+  const res = await fetch(`${base}/api/import-brew-method-images`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: form,
+  });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event('auth-logout'));
+    throw new Error('Unauthorized');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Import failed');
+  return { saved: data.saved ?? 0, total: data.total ?? 0 };
 }
 
 const getBase = () =>

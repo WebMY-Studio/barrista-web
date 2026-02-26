@@ -1,7 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent, type FormEvent } from 'react';
 import { ItemCategory } from '../types';
-import { getAllCategories, saveCategory, deleteCategory } from '../services/api';
-import { Plus, Edit, Trash2 } from 'lucide-react';
+import { getAllCategories, saveCategory, deleteCategory, getCategoryImageUrl, uploadCategoryPhoto } from '../services/api';
+import { Plus, Edit, Trash2, Upload, Loader } from 'lucide-react';
+
+const CATEGORY_PLACEHOLDER = "data:image/svg+xml," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="88" height="88" viewBox="0 0 88 88"><rect width="88" height="88" fill="#e8e8e8"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#999" font-size="11" font-family="sans-serif">No photo</text></svg>'
+);
 
 export function CategoriesPage() {
   const [categories, setCategories] = useState<ItemCategory[]>([]);
@@ -9,6 +13,9 @@ export function CategoriesPage() {
   const [editing, setEditing] = useState<ItemCategory | undefined>();
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ id: '', title: '' });
+  const [photoKey, setPhotoKey] = useState(0);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     getAllCategories()
@@ -26,7 +33,23 @@ export function CategoriesPage() {
     if (showForm) window.scrollTo(0, 0);
   }, [showForm]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handlePhotoChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !form.id) return;
+    setUploadingPhoto(true);
+    try {
+      await uploadCategoryPhoto(form.id, file);
+      setPhotoKey((k) => k + 1);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Failed to upload photo');
+    } finally {
+      setUploadingPhoto(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     try {
       await saveCategory(form);
@@ -86,6 +109,36 @@ export function CategoriesPage() {
                 required
               />
             </div>
+            {form.id && (
+              <div className="form-group form-group-photo">
+                <label>Photo</label>
+                <div className="drink-form-photo">
+                  <img
+                    src={getCategoryImageUrl(form.id) + (photoKey ? `?t=${photoKey}` : '')}
+                    alt=""
+                    className="drink-form-photo-preview"
+                    onError={(e) => { e.currentTarget.src = CATEGORY_PLACEHOLDER; }}
+                  />
+                  <input
+                    ref={photoInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="drink-form-photo-input"
+                    onChange={handlePhotoChange}
+                    disabled={uploadingPhoto}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => photoInputRef.current?.click()}
+                    disabled={uploadingPhoto}
+                    className="btn-secondary drink-form-photo-btn"
+                  >
+                    {uploadingPhoto ? <Loader size={16} className="spinner" /> : <Upload size={16} />}
+                    {uploadingPhoto ? 'Uploading…' : 'Upload photo'}
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="form-actions">
               <button type="submit" className="btn-primary">
                 Save
@@ -111,6 +164,12 @@ export function CategoriesPage() {
           ) : (
             categories.map((c) => (
               <div key={c.id} className="category-card">
+                <img
+                  src={getCategoryImageUrl(c.id)}
+                  alt=""
+                  className="category-card-image"
+                  onError={(e) => { e.currentTarget.src = CATEGORY_PLACEHOLDER; }}
+                />
                 <div className="dish-card-main">
                   <span className="dish-id">{c.id}</span>
                   <h3 className="dish-title">{c.title}</h3>

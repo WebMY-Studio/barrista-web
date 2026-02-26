@@ -34,3 +34,20 @@ export interface ItemCategory {
   title: string;
   drinksCount: number;
 }
+
+export interface MainInfo {
+  coffee: string;
+  water: string;
+  temperature: string;
+  time: string;
+}
+
+export interface BrewMethod {
+  id: string;
+  title: string;
+  description: string;
+  info: MainInfo;
+  howToPrepare: string[];
+  proTips: string[];
+  commonMistakes: string[];
+}

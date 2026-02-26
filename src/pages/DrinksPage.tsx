@@ -15,11 +15,19 @@ export function DrinksPage() {
   const [editingDrink, setEditingDrink] = useState<Drink | undefined>();
   const [showForm, setShowForm] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [imageFilter, setImageFilter] = useState<'all' | 'no-image'>('all');
+  const [drinkIdsWithoutImage, setDrinkIdsWithoutImage] = useState<Set<string>>(new Set());
 
   const filteredDrinks = useMemo(() => {
-    if (!selectedCategory) return drinks;
-    return drinks.filter((d) => d.categories.includes(selectedCategory));
-  }, [drinks, selectedCategory]);
+    let list = drinks;
+    if (selectedCategory) list = list.filter((d) => d.categories.includes(selectedCategory));
+    if (imageFilter === 'no-image') list = list.filter((d) => drinkIdsWithoutImage.has(d.id));
+    return list;
+  }, [drinks, selectedCategory, imageFilter, drinkIdsWithoutImage]);
+
+  const handleImageError = (drinkId: string) => {
+    setDrinkIdsWithoutImage((prev) => new Set(prev).add(drinkId));
+  };
 
   useEffect(() => {
     Promise.all([getAllDrinks(), getAllCategories(), getAllDishes()])
@@ -108,7 +116,29 @@ export function DrinksPage() {
             selectedCategory={selectedCategory}
             onSelect={setSelectedCategory}
           />
-          <DrinkList drinks={filteredDrinks} onEdit={handleEdit} onDelete={handleDelete} />
+          <div className="drink-filters-row">
+            <span className="drink-filters-label">Image:</span>
+            <button
+              type="button"
+              className={`chip ${imageFilter === 'all' ? 'chip-active' : ''}`}
+              onClick={() => setImageFilter('all')}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              className={`chip ${imageFilter === 'no-image' ? 'chip-active' : ''}`}
+              onClick={() => setImageFilter('no-image')}
+            >
+              No image
+            </button>
+          </div>
+          <DrinkList
+            drinks={filteredDrinks}
+            onEdit={handleEdit}
+            onDelete={handleDelete}
+            onImageError={handleImageError}
+          />
         </>
       ) : null}
     </div>

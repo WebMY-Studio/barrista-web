@@ -13,6 +13,9 @@ server/data
 database
 *.db
 .env
+
+# Uploaded images (drinks, categories, dishes) — already under server/data; explicit for clarity
+server/data/images
 dist-ssr
 *.local
 

@@ -5,6 +5,7 @@ import { Dashboard } from './pages/Dashboard';
 import { DrinksPage } from './pages/DrinksPage';
 import { DishesPage } from './pages/DishesPage';
 import { CategoriesPage } from './pages/CategoriesPage';
+import { BrewMethodsPage } from './pages/BrewMethodsPage';
 import { LogOut } from 'lucide-react';
 
 function AppContent() {
@@ -34,6 +35,9 @@ function AppContent() {
             <NavLink to="/categories" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
               Categories
             </NavLink>
+            <NavLink to="/brew-methods" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
+              Brew methods
+            </NavLink>
             <button type="button" onClick={logout} className="nav-link nav-logout" title="Sign out">
               <LogOut size={18} />
             </button>
@@ -46,6 +50,7 @@ function AppContent() {
             <Route path="/drinks" element={<DrinksPage />} />
             <Route path="/dishes" element={<DishesPage />} />
             <Route path="/categories" element={<CategoriesPage />} />
+            <Route path="/brew-methods" element={<BrewMethodsPage />} />
           </Routes>
         </main>
       </div>
