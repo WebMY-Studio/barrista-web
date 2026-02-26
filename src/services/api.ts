@@ -328,6 +328,34 @@ export async function saveTranslationLanguages(list: TranslationLanguageOption[]
   return res.json();
 }
 
+export async function getTranslationPromptExtra(): Promise<{ extra: string }> {
+  const res = await fetchApi('/api/translation-prompt-extra');
+  return res.json();
+}
+
+export async function saveTranslationPromptExtra(extra: string): Promise<{ extra: string }> {
+  const res = await fetchApi('/api/translation-prompt-extra', {
+    method: 'PUT',
+    body: JSON.stringify({ extra }),
+  });
+  return res.json();
+}
+
+export type TranslationModelOption = { id: string; label: string };
+
+export async function getTranslationModel(): Promise<{ model: string; options: TranslationModelOption[] }> {
+  const res = await fetchApi('/api/translation-model');
+  return res.json();
+}
+
+export async function saveTranslationModel(model: string): Promise<{ model: string }> {
+  const res = await fetchApi('/api/translation-model', {
+    method: 'PUT',
+    body: JSON.stringify({ model }),
+  });
+  return res.json();
+}
+
 export async function downloadDbFile(lang?: string): Promise<void> {
   const base = getBase().replace(/\/$/, '');
   const url = lang ? `${base}/api/export-db?lang=${encodeURIComponent(lang)}` : `${base}/api/export-db`;
@@ -345,6 +373,11 @@ export async function downloadDbFile(lang?: string): Promise<void> {
   a.download = name;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+/** Delete a translated database (barrista_<lang>.db). Cannot delete en. */
+export async function deleteDatabase(lang: string): Promise<void> {
+  await fetchApi(`/api/databases/${encodeURIComponent(lang)}`, { method: 'DELETE' });
 }
 
 export async function downloadJsonForLanguage(lang: string): Promise<void> {
@@ -397,10 +430,14 @@ export type TranslationOptions = {
   overrideExisting: boolean;
 };
 
+export type BlockStats = { translated: number; skipped: number; error: number; durationMs: number };
+
 export type TranslationResult = {
   ok: boolean;
   lang: string;
   counts: { categories: number; dishes: number; drinks: number; brewMethods: number };
+  blockResults?: Record<string, BlockStats>;
+  logLines?: string[];
 };
 
 export type TranslationProgress = {
@@ -409,6 +446,10 @@ export type TranslationProgress = {
   total?: number;
   done?: boolean;
   counts?: { categories: number; dishes: number; drinks: number; brewMethods: number };
+  logLines?: string[];
+  etaSeconds?: number | null;
+  lastId?: string | null;
+  lastItemMs?: number | null;
 };
 
 export async function getTranslationProgress(): Promise<TranslationProgress | null> {

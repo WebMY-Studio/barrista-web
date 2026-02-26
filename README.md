@@ -1,18 +1,22 @@
 # ☕ Barrista Admin
 
-Admin panel for managing coffee and drink recipes.
+Admin panel for managing coffee and drink recipes, dishes, categories, and brew methods. Supports multiple languages with translation via OpenAI API.
 
 ## Features
 
-- ✅ **Login with username and password** (JWT, protected routes)
-- ✅ Full drink management (CRUD)
-- ✅ Convenient form for adding/editing drinks
-- ✅ Management of ingredients, instructions, and categories
-- ✅ Translate drinks via API into multiple languages
-- ✅ Export data to JSON
-- ✅ **SQLite** database (files in `server/data/`: `barrista_en.db`, etc.) — easy to export and back up
-- ✅ “Download SQLite database” button — download the DB file from the admin UI
-- ✅ Modern, responsive design
+- **Login** — username and password (JWT, protected routes)
+- **Drinks** — full CRUD, ingredients, instructions, categories, dish, photo
+- **Dishes** — CRUD, description, volume, photo
+- **Categories** — CRUD, photo
+- **Brew methods** — CRUD (title, description, main info, how to prepare, pro tips, common mistakes), photo
+- **Multi-language** — separate SQLite DB per language (`barrista_en.db`, `barrista_ru.db`, etc.)
+- **Translations** — translate from English to other languages via **OpenAI API** (gpt-4o-mini, batched for cost efficiency); configurable language list and “override existing” or merge
+- **Dashboard**
+  - **JSON** — import JSON (as any configured language), export DB or JSON for selected languages, **check translation integrity** (compare translated DBs with en), **delete translated DB**
+  - **Images** — import drink/category/dish/brew method images (by filename convention), download all images as ZIP
+  - **Translations** — select entities (brew methods, drinks, categories, dishes), target language, override or merge, **Start translation** with progress
+- **Translation languages** — separate tab to configure which languages appear in the translation selector (code + English label)
+- **SQLite** — all data in `server/data/`; easy backup and deploy with a volume
 
 ## Installation
 
@@ -21,18 +25,19 @@ Admin panel for managing coffee and drink recipes.
 npm install
 ```
 
-2. Configure environment variables. Copy the example and edit:
+2. Configure environment. Copy the example and edit:
 ```bash
 cp server/.env.example .env
 ```
-In `.env` set:
+Or create `.env` in the project root. Set:
 - `ADMIN_USER` — login (case-insensitive)
 - `ADMIN_PASSWORD` — password
-- `JWT_SECRET` — secret for JWT signing (use a long random string in production)
+- `JWT_SECRET` — secret for JWT (use a long random string in production)
+- `OPENAI_API_KEY` — **required for translations** (Dashboard → Start translation). Get a key at [OpenAI API](https://platform.openai.com/api-keys).
 
 Optional: `JWT_EXPIRES_IN` (default `7d`).
 
-3. Start the app (API and frontend run together):
+3. Start the app (API and frontend together):
 ```bash
 npm run dev
 ```
@@ -41,109 +46,78 @@ npm run dev
    - Frontend: **http://localhost:5173**
    - API: **http://localhost:3001**
 
-On first visit you will need to log in (credentials from `.env`).
+Log in with credentials from `.env`.
 
 ## Data structure
 
 ### Drink
-```typescript
-{
-  id: string;
-  title: string;
-  ingredients: Ingredient[];
-  instructions: string[];
-  dishId: string;
-  portionsAmount: number;
-  categories: string[];
-}
-```
-
-### Ingredient
-```typescript
-{
-  title: string;
-  volume: string;
-}
-```
-
-### Category
-```typescript
-{
-  id: string;
-  title: string;
-}
-```
-Stored in the `categories` table. A drink’s `categories` field is an array of category ids.
+- `id`, `title`, `ingredients` (array of `{ name, amount?, unit? }`), `instructions` (array of strings), `dishId`, `portionsAmount`, `categories` (array of category ids).
 
 ### Dish
-```typescript
-{
-  id: string;
-  title: string;
-  description: string;
-  volume: string;
-}
-```
-Stored in the `dishes` table. A drink’s `dishId` is the id of one dish.
+- `id`, `title`, `description`, `volume`.
+
+### Category
+- `id`, `title`. A drink’s `categories` is an array of category ids.
+
+### Brew method
+- `id`, `title`, `description`, `info` (`coffee`, `water`, `temperature`, `time`), `howToPrepare`, `proTips`, `commonMistakes` (arrays of strings).
 
 ## Usage
 
-### Login
-Use the login and password from `.env`. Username is case-insensitive (e.g. `Webmy` and `webmy` are the same).
+### Dashboard
 
-### Adding a drink
-1. Click “Add drink”
-2. Fill in all form fields
-3. Add ingredients, instructions, and categories
-4. Click “Save”
+- **JSON**
+  - **Import as** — choose language (Main en or any from Translation languages), then **Import JSON** to create/overwrite `barrista_<lang>.db`.
+  - **Languages (for export)** — checkboxes for existing DBs; **Export selected databases** (download `.db` files) or **Export JSON for selected languages**.
+  - **Check translation integrity** — compares each translated DB with `barrista_en.db`; report shows “All good” or missing entities per DB; log is shown and downloaded as `.txt`.
+  - **Delete translated DB** — select a non‑en language and delete its DB file (en cannot be deleted).
 
-### Translations and multi-language
+- **Images**
+  - Import by filename: `drink_<id>.jpg`, `category_<id>.png`, `dish_<id>.png`, `brew_<id>.png`. **Download all images** saves a ZIP of `server/data/images/`.
 
-Languages are tied to separate DB files in `server/data/`:
-- Main DB (English): `barrista_en.db`
-- Other languages: `barrista_ru.db`, `barrista_es.db`, etc. (language code in the filename).
+- **Translations**
+  - Check which to translate: Brew methods, Drinks, Categories, Dishes.
+  - Choose **Language** (from Translation languages tab).
+  - **Override existing** — if checked, target tables are cleared and refilled; if unchecked, only missing entities are added.
+  - **Start translation** — runs OpenAI translation from `barrista_en.db` into the selected language; progress is shown next to the button. Requires `OPENAI_API_KEY` in `.env`.
 
-On the Dashboard, the language list is built from these files. You can:
-- **Download main SQLite database (EN)** — download the main DB
-- Select one or more languages and click **Export selected databases** — download `barrista_XX.db` for each selected language
-- **Export JSONs for selected languages** — download JSON export for each selected language (drinks, dishes, categories).
+### Translation languages (tab)
 
-To add a new language (e.g. `ru`), create and fill `server/data/barrista_ru.db` with the same tables (`drinks`, `dishes`, `categories`). Options:
-- Import from your own JSON/scripts
-- Use the translation API: call `translateDrink` from `src/services/translation.ts`, which translates drink title, instructions, and ingredient names via an external API; then write the translated data into the new DB (script or separate tool).
-
-Translation API setup is in `src/services/translation.ts`: set `TRANSLATION_API_URL` and adjust `translateText` to match your API. Expected POST body: `{ "text": "Text", "targetLang": "en" }`, response: `{ "translatedText": "Translated text" }`. For testing without a real API you can use `mockTranslateDrink`.
+- Add/edit/remove languages (code + English label). This list is used in the Dashboard translation selector and in the JSON “Import as” dropdown. Save to `server/data/translation-languages.json`.
 
 ### Export
-- On the Dashboard: download the main DB (EN), selected language DBs, or JSON per selected language.
-- In the drinks section: export the drink list to JSON.
-- Categories and dishes: each section has its own JSON export.
 
-## Build and single-entry run
+- Dashboard: download DB or JSON for selected languages.
+- Drinks / Dishes / Categories / Brew methods: each section has its own management and data; export is via Dashboard JSON per language.
+
+## Build and run (single port)
 
 ```bash
 npm run build
 npm run start
 ```
 
-Open **http://localhost:3001** — both the admin UI and API are served from one port. SQLite DB: `server/data/barrista_en.db` (and other `barrista_XX.db` files per language).
+Open **http://localhost:3001** — admin UI and API from one port. Data in `server/data/` (SQLite files and images).
 
-## Deploy on Railway
+## Deploy (e.g. Railway)
 
-1. Push the repo to GitHub and open [Railway](https://railway.app).
-2. **New Project** → **Deploy from GitHub repo** → choose this repo.
-3. Railway will detect the **Dockerfile** and build the image (frontend is built inside the image, then the Node server serves it and the API).
-4. In the service **Variables** tab, set:
-   - `ADMIN_USER` — login
-   - `ADMIN_PASSWORD` — password
-   - `JWT_SECRET` — long random string for JWT
-   - Optionally: `JWT_EXPIRES_IN` (default `7d`).
-5. In **Settings** → **Networking** → **Generate Domain** to get a public URL.
-6. Open the generated URL — you get the admin UI and API on the same origin (no `VITE_API_URL` needed).
+1. Push to GitHub and create a project on [Railway](https://railway.app); deploy from the repo (Dockerfile builds frontend and runs the Node server).
+2. **Variables**: set `ADMIN_USER`, `ADMIN_PASSWORD`, `JWT_SECRET`, and **`OPENAI_API_KEY`** (for translations).
+3. **Persistent volume** — mount a volume at **`/app/server/data`** so DBs and images survive redeploys.
+4. Generate a domain in Settings → Networking.
 
-The app uses `PORT` set by Railway. SQLite files live in `server/data`; if Railway provides a persistent disk for the service, data will survive restarts.
+The app uses `PORT` from the platform. With the volume mounted, `barrista_*.db` and images persist.
+
+## Scripts
+
+- `npm run dev` — API + Vite dev server
+- `npm run build` — TypeScript + Vite build
+- `npm run start` — run production server
+- `npm run sanitize-db` — sanitize main DB (see script)
+- `npm run import-dishes` / `import-categories` — import from JSON in repo
+- `npm run translate-db-es` — CLI script to build `barrista_es.db` from en (uses same OpenAI translator if `OPENAI_API_KEY` is set)
 
 ## Tech stack
 
-- React 18, TypeScript, Vite, Lucide React, React Router
-- Backend: Node.js, Express, **SQLite** (better-sqlite3), JWT, dotenv
+- **Frontend:** React 18, TypeScript, Vite, Lucide React, React Router
+- **Backend:** Node.js, Express, SQLite (better-sqlite3), JWT, dotenv, **OpenAI** (translations), multer, archiver

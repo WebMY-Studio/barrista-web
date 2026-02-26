@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Coffee, UtensilsCrossed, Tags, Download, Loader, Upload, ImagePlus } from 'lucide-react';
-import { getAvailableLanguages, downloadDbFile, downloadJsonForLanguage, importJson, importDrinkImages, importCategoryImages, importDishImages, importBrewMethodImages, downloadAllImages, startTranslation, getTranslationLanguages, getTranslationProgress, checkTranslationIntegrity, type TranslationLanguageOption, type TranslationProgress } from '../services/api';
+import { Coffee, UtensilsCrossed, Tags, Download, Loader, Upload, ImagePlus, Trash2 } from 'lucide-react';
+import { getAvailableLanguages, downloadDbFile, downloadJsonForLanguage, importJson, importDrinkImages, importCategoryImages, importDishImages, importBrewMethodImages, downloadAllImages, startTranslation, getTranslationLanguages, getTranslationProgress, checkTranslationIntegrity, deleteDatabase, getTranslationPromptExtra, saveTranslationPromptExtra, getTranslationModel, saveTranslationModel, type TranslationLanguageOption, type TranslationProgress } from '../services/api';
 
 export function Dashboard() {
   const [languages, setLanguages] = useState<{ code: string }[]>([]);
@@ -24,10 +24,18 @@ export function Dashboard() {
   const [translating, setTranslating] = useState(false);
   const [translationLanguages, setTranslationLanguages] = useState<TranslationLanguageOption[]>([]);
   const [translationProgress, setTranslationProgress] = useState<TranslationProgress | null>(null);
+  const [translationRunLog, setTranslationRunLog] = useState<string>('');
   const [integrityLog, setIntegrityLog] = useState<string | null>(null);
   const [integrityLoading, setIntegrityLoading] = useState(false);
+  const [deleteLang, setDeleteLang] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [promptExtra, setPromptExtra] = useState('');
+  const [promptExtraSaving, setPromptExtraSaving] = useState(false);
+  const [translationModel, setTranslationModel] = useState('');
+  const [translationModelOptions, setTranslationModelOptions] = useState<{ id: string; label: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const translationProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const translationLogLineCountRef = useRef(0);
   const imagesInputRef = useRef<HTMLInputElement>(null);
   const categoryImagesInputRef = useRef<HTMLInputElement>(null);
   const dishImagesInputRef = useRef<HTMLInputElement>(null);
@@ -43,6 +51,22 @@ export function Dashboard() {
   useEffect(() => {
     getTranslationLanguages()
       .then(setTranslationLanguages)
+      .catch((err) => console.error(err));
+  }, []);
+
+  useEffect(() => {
+    getTranslationPromptExtra()
+      .then(({ extra }) => setPromptExtra(extra))
+      .catch((err) => console.error(err));
+  }, []);
+
+  useEffect(() => {
+    getTranslationModel()
+      .then(({ model, options }) => {
+        setTranslationModelOptions(options);
+        const valid = options.some((m) => m.id === model);
+        setTranslationModel(valid ? model : options[0]?.id ?? '');
+      })
       .catch((err) => console.error(err));
   }, []);
 
@@ -202,10 +226,33 @@ export function Dashboard() {
     }
     setTranslationProgress(null);
     setTranslating(true);
+    const entities = [
+      translationBrewMethods && 'brew_methods',
+      translationDrinks && 'drinks',
+      translationCategories && 'categories',
+      translationDishes && 'dishes',
+    ].filter(Boolean) as string[];
+    const logStart = [
+      `Translation started at ${new Date().toISOString()}`,
+      `Target language: ${translationLang}`,
+      `Override existing: ${translationOverride}`,
+      `Entities: ${entities.join(', ')}`,
+      '',
+    ].join('\n');
+    setTranslationRunLog(logStart);
+    translationLogLineCountRef.current = 0;
+
     translationProgressIntervalRef.current = setInterval(async () => {
       try {
         const p = await getTranslationProgress();
-        if (p) setTranslationProgress(p);
+        if (p) {
+          setTranslationProgress(p);
+          if (p.logLines && p.logLines.length > translationLogLineCountRef.current) {
+            const newLines = p.logLines.slice(translationLogLineCountRef.current);
+            translationLogLineCountRef.current = p.logLines.length;
+            setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + newLines.join('\n'));
+          }
+        }
       } catch {
         // ignore
       }
@@ -223,13 +270,18 @@ export function Dashboard() {
         clearInterval(translationProgressIntervalRef.current);
         translationProgressIntervalRef.current = null;
       }
-      setTranslationProgress({ done: true, counts: result.counts });
+      setTranslationProgress((prev) => ({ ...prev, done: true, counts: result.counts }));
+      if (result.logLines && result.logLines.length > translationLogLineCountRef.current) {
+        const newLines = result.logLines.slice(translationLogLineCountRef.current);
+        translationLogLineCountRef.current = result.logLines.length;
+        setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + newLines.join('\n'));
+      }
       await getAvailableLanguages().then(setLanguages);
-      const msg = `Translation to ${translationLang} done. Categories: ${result.counts.categories}, Dishes: ${result.counts.dishes}, Drinks: ${result.counts.drinks}, Brew methods: ${result.counts.brewMethods}`;
-      alert(msg);
+      setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + 'Done.');
     } catch (err) {
       console.error(err);
-      alert(err instanceof Error ? err.message : 'Translation failed');
+      const errMsg = err instanceof Error ? err.message : 'Translation failed';
+      setTranslationRunLog((prev) => prev + `Error: ${errMsg}`);
     } finally {
       if (translationProgressIntervalRef.current) {
         clearInterval(translationProgressIntervalRef.current);
@@ -257,6 +309,38 @@ export function Dashboard() {
       alert(err instanceof Error ? err.message : 'Check failed');
     } finally {
       setIntegrityLoading(false);
+    }
+  };
+
+  const translatedLangs = languages.filter((l) => l.code !== 'en');
+
+  const handleSavePromptExtra = async () => {
+    setPromptExtraSaving(true);
+    try {
+      const { extra } = await saveTranslationPromptExtra(promptExtra);
+      setPromptExtra(extra);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Failed to save');
+    } finally {
+      setPromptExtraSaving(false);
+    }
+  };
+
+  const handleDeleteDatabase = async () => {
+    if (!deleteLang) return;
+    if (!confirm(`Delete database barrista_${deleteLang}.db? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      await deleteDatabase(deleteLang);
+      await getAvailableLanguages().then(setLanguages);
+      setDeleteLang('');
+      setIntegrityLog(null);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Failed to delete database');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -352,6 +436,33 @@ export function Dashboard() {
                   Check translation integrity
                 </button>
               </div>
+              {translatedLangs.length > 0 && (
+                <div className="dashboard-delete-db">
+                  <label className="dashboard-delete-db-label">
+                    Delete translated DB:
+                    <select
+                      value={deleteLang}
+                      onChange={(e) => setDeleteLang(e.target.value)}
+                      disabled={deleting}
+                      className="dashboard-translations-select"
+                    >
+                      <option value="">— select —</option>
+                      {translatedLangs.map((l) => (
+                        <option key={l.code} value={l.code}>barrista_{l.code}.db</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleDeleteDatabase}
+                    disabled={deleting || !deleteLang}
+                    className="btn-secondary"
+                  >
+                    {deleting ? <Loader size={16} className="spinner" /> : <Trash2 size={16} />}
+                    Delete
+                  </button>
+                </div>
+              )}
               {integrityLog !== null && (
                 <div className="dashboard-integrity-log">
                   <pre className="dashboard-integrity-pre">{integrityLog}</pre>
@@ -464,6 +575,27 @@ export function Dashboard() {
       </div>
       <div className="dashboard-block dashboard-translations">
         <h3>Translations</h3>
+        <div className="dashboard-prompt-extra">
+          <label className="dashboard-prompt-extra-label">
+            Extra instructions for translation (appended to default domain/terminology; output format is fixed):
+          </label>
+          <textarea
+            value={promptExtra}
+            onChange={(e) => setPromptExtra(e.target.value)}
+            placeholder="e.g. Use formal tone. Prefer 'espresso' not 'expresso'. Keep measurement units as-is."
+            rows={3}
+            className="dashboard-prompt-extra-textarea"
+          />
+          <button
+            type="button"
+            onClick={handleSavePromptExtra}
+            disabled={promptExtraSaving}
+            className="btn-secondary"
+          >
+            {promptExtraSaving ? <Loader size={16} className="spinner" /> : null}
+            Save prompt extra
+          </button>
+        </div>
         <div className="dashboard-translations-row">
           <div className="dashboard-translations-checkboxes">
             <label className="dashboard-lang-check">
@@ -506,6 +638,29 @@ export function Dashboard() {
         </div>
         <div className="dashboard-translations-row">
           <label className="dashboard-translations-lang-label">
+            Model:
+            <select
+              value={translationModel}
+              onChange={async (e) => {
+                const v = e.target.value;
+                if (!v) return;
+                setTranslationModel(v);
+                try {
+                  await saveTranslationModel(v);
+                } catch (err) {
+                  console.error(err);
+                  getTranslationModel().then(({ model }) => setTranslationModel(model));
+                }
+              }}
+              disabled={translating || translationModelOptions.length === 0}
+              className="dashboard-translations-select dashboard-translations-model-select"
+            >
+              {translationModelOptions.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="dashboard-translations-lang-label">
             Language:
             <select
               value={translationLang}
@@ -547,13 +702,40 @@ export function Dashboard() {
               {translationProgress?.done ? (
                 <>Done. Categories: {translationProgress.counts?.categories ?? 0}, Dishes: {translationProgress.counts?.dishes ?? 0}, Drinks: {translationProgress.counts?.drinks ?? 0}, Brew methods: {translationProgress.counts?.brewMethods ?? 0}</>
               ) : translationProgress?.step ? (
-                <>Translating: {translationProgress.step} {translationProgress.current ?? 0}/{translationProgress.total ?? 0}</>
+                <>
+                  Translating: {translationProgress.step === 'categories' ? 'Categories' : translationProgress.step === 'dishes' ? 'Dishes' : translationProgress.step === 'drinks' ? 'Drinks' : 'Brew methods'}{' '}
+                  {translationProgress.current ?? 0}/{translationProgress.total ?? 0}
+                  {translationProgress.lastId != null && (
+                    <> — {translationProgress.lastId} ({translationProgress.lastItemMs != null ? (translationProgress.lastItemMs >= 1000 ? `${(translationProgress.lastItemMs / 1000).toFixed(1)}s` : `${translationProgress.lastItemMs}ms`) : '?'})</>
+                  )}
+                  {translationProgress.etaSeconds != null && translationProgress.etaSeconds > 0 && <> · ETA: ~{translationProgress.etaSeconds}s</>}
+                </>
               ) : (
                 <>Starting…</>
               )}
             </span>
           )}
         </div>
+        {translationRunLog && (
+          <div className="dashboard-integrity-log dashboard-translation-run-log">
+            <pre className="dashboard-integrity-pre">{translationRunLog}</pre>
+            <button
+              type="button"
+              onClick={() => {
+                const blob = new Blob([translationRunLog], { type: 'text/plain;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `translation-run-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="btn-secondary"
+            >
+              <Download size={16} /> Download log
+            </button>
+          </div>
+        )}
       </div>
       <div className="dashboard-cards">
         <Link to="/drinks" className="dashboard-card">

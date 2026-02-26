@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
 import { sanitizeDrink } from './sanitize.js';
-import { translateText, translateArray, translateInfo } from './translator.js';
+import { translateText, translateArray, translateInfo, TRANSLATION_MODEL_OPTIONS } from './translator.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -586,7 +586,10 @@ app.post('/api/translate', async (req, res) => {
   if (!fs.existsSync(sourcePath)) {
     return res.status(400).json({ error: 'Source database (en) not found' });
   }
-  translationProgress = { step: 'starting', current: 0, total: 0 };
+  const RATES_SEC_PER_ITEM = { categories: 0.76, dishes: 3.3, drinks: 2.4, brew_methods: 10.7 };
+  const BLOCK_LABELS = { categories: 'Categories', dishes: 'Dishes', drinks: 'Drinks', brew_methods: 'Brew methods' };
+
+  translationProgress = { step: 'starting', current: 0, total: 0, logLines: [], etaSeconds: null, lastId: null, lastItemMs: null };
   let sourceDb;
   let targetDb;
   try {
@@ -597,9 +600,41 @@ app.post('/api/translate', async (req, res) => {
     targetDb.exec('BEGIN');
 
     const counts = { categories: 0, dishes: 0, drinks: 0, brewMethods: 0 };
+    const blockResults = {};
 
-    const setProgress = (step, current, total) => {
-      translationProgress = { step, current, total };
+    const setProgress = (step, current, total, extra = {}) => {
+      const remaining = Math.max(0, total - current);
+      const etaSeconds = total > 0 && RATES_SEC_PER_ITEM[step] != null ? Math.round(remaining * RATES_SEC_PER_ITEM[step]) : null;
+      translationProgress = {
+        ...translationProgress,
+        step,
+        current,
+        total,
+        etaSeconds,
+        lastId: extra.lastId !== undefined ? extra.lastId : translationProgress.lastId,
+        lastItemMs: extra.lastItemMs !== undefined ? extra.lastItemMs : translationProgress.lastItemMs,
+      };
+    };
+
+    const pushBlockLog = (name, stats) => {
+      const label = BLOCK_LABELS[name] || name;
+      const durationStr = stats.durationMs >= 1000 ? `${(stats.durationMs / 1000).toFixed(1)}s` : `${stats.durationMs}ms`;
+      translationProgress.logLines = translationProgress.logLines || [];
+      translationProgress.logLines.push(
+        `${label}: Translated: ${stats.translated}. Error: ${stats.error}. Skipped: ${stats.skipped}. (${durationStr})`
+      );
+    };
+
+    const runBlock = async (name, fn) => {
+      const stats = { translated: 0, skipped: 0, error: 0, durationMs: 0 };
+      const t0 = Date.now();
+      try {
+        await fn(stats);
+      } finally {
+        stats.durationMs = Date.now() - t0;
+        blockResults[name] = stats;
+        pushBlockLog(name, stats);
+      }
     };
 
     if (doCategories) {
@@ -608,13 +643,26 @@ app.post('/api/translate', async (req, res) => {
       const existingIds = overrideExisting ? new Set() : new Set((targetDb.prepare('SELECT id FROM categories').all()).map((r) => r.id));
       const insCat = targetDb.prepare('INSERT OR REPLACE INTO categories (id, title) VALUES (?, ?)');
       setProgress('categories', 0, rows.length);
-      for (const r of rows) {
-        if (!overrideExisting && existingIds.has(r.id)) continue;
-        const title = await translateText(r.title, targetLang);
-        insCat.run(r.id, title);
-        counts.categories++;
-        setProgress('categories', counts.categories, rows.length);
-      }
+      await runBlock('categories', async (stats) => {
+        for (const r of rows) {
+          if (!overrideExisting && existingIds.has(r.id)) {
+            stats.skipped++;
+            continue;
+          }
+          const t0 = Date.now();
+          try {
+            const title = await translateText(r.title, targetLang);
+            insCat.run(r.id, title);
+            stats.translated++;
+            counts.categories++;
+            setProgress('categories', counts.categories, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+          } catch (e) {
+            stats.error++;
+            console.error('Category translate error:', r.id, e.message);
+            setProgress('categories', counts.categories, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+          }
+        }
+      });
     }
 
     if (doDishes) {
@@ -623,15 +671,28 @@ app.post('/api/translate', async (req, res) => {
       const existingIds = overrideExisting ? new Set() : new Set((targetDb.prepare('SELECT id FROM dishes').all()).map((r) => r.id));
       const insDish = targetDb.prepare('INSERT OR REPLACE INTO dishes (id, title, description, volume) VALUES (?, ?, ?, ?)');
       setProgress('dishes', 0, rows.length);
-      for (const r of rows) {
-        if (!overrideExisting && existingIds.has(r.id)) continue;
-        const title = await translateText(r.title, targetLang);
-        const description = await translateText(r.description || '', targetLang);
-        const volume = await translateText(r.volume || '', targetLang);
-        insDish.run(r.id, title, description, volume);
-        counts.dishes++;
-        setProgress('dishes', counts.dishes, rows.length);
-      }
+      await runBlock('dishes', async (stats) => {
+        for (const r of rows) {
+          if (!overrideExisting && existingIds.has(r.id)) {
+            stats.skipped++;
+            continue;
+          }
+          const t0 = Date.now();
+          try {
+            const title = await translateText(r.title, targetLang);
+            const description = await translateText(r.description || '', targetLang);
+            const volume = await translateText(r.volume || '', targetLang);
+            insDish.run(r.id, title, description, volume);
+            stats.translated++;
+            counts.dishes++;
+            setProgress('dishes', counts.dishes, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+          } catch (e) {
+            stats.error++;
+            console.error('Dish translate error:', r.id, e.message);
+            setProgress('dishes', counts.dishes, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+          }
+        }
+      });
     }
 
     if (doDrinks) {
@@ -643,17 +704,30 @@ app.post('/api/translate', async (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
       setProgress('drinks', 0, rows.length);
-      for (const r of rows) {
-        if (!overrideExisting && existingIds.has(r.id)) continue;
-        const title = await translateText(r.title, targetLang);
-        const ingredients = JSON.parse(r.ingredients || '[]');
-        const ingredientsT = await translateArray(ingredients, targetLang);
-        const instructions = JSON.parse(r.instructions || '[]');
-        const instructionsT = await translateArray(instructions, targetLang);
-        insDrink.run(r.id, title, JSON.stringify(ingredientsT), JSON.stringify(instructionsT), r.dish_id, r.portions_amount, r.categories);
-        counts.drinks++;
-        setProgress('drinks', counts.drinks, rows.length);
-      }
+      await runBlock('drinks', async (stats) => {
+        for (const r of rows) {
+          if (!overrideExisting && existingIds.has(r.id)) {
+            stats.skipped++;
+            continue;
+          }
+          const t0 = Date.now();
+          try {
+            const title = await translateText(r.title, targetLang);
+            const ingredients = JSON.parse(r.ingredients || '[]');
+            const ingredientsT = await translateArray(ingredients, targetLang);
+            const instructions = JSON.parse(r.instructions || '[]');
+            const instructionsT = await translateArray(instructions, targetLang);
+            insDrink.run(r.id, title, JSON.stringify(ingredientsT), JSON.stringify(instructionsT), r.dish_id, r.portions_amount, r.categories);
+            stats.translated++;
+            counts.drinks++;
+            setProgress('drinks', counts.drinks, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+          } catch (e) {
+            stats.error++;
+            console.error('Drink translate error:', r.id, e.message);
+            setProgress('drinks', counts.drinks, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+          }
+        }
+      });
     }
 
     if (doBrew) {
@@ -665,29 +739,43 @@ app.post('/api/translate', async (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
       setProgress('brew_methods', 0, rows.length);
-      for (const r of rows) {
-        if (!overrideExisting && existingIds.has(r.id)) continue;
-        const title = await translateText(r.title, targetLang);
-        const description = await translateText(r.description || '', targetLang);
-        const info = JSON.parse(r.info || '{}');
-        const infoT = await translateInfo(info, targetLang);
-        const howToPrepare = JSON.parse(r.how_to_prepare || '[]');
-        const howT = await translateArray(howToPrepare, targetLang);
-        const proTips = JSON.parse(r.pro_tips || '[]');
-        const proT = await translateArray(proTips, targetLang);
-        const commonMistakes = JSON.parse(r.common_mistakes || '[]');
-        const commonT = await translateArray(commonMistakes, targetLang);
-        insBrew.run(r.id, title, description, JSON.stringify(infoT), JSON.stringify(howT), JSON.stringify(proT), JSON.stringify(commonT));
-        counts.brewMethods++;
-        setProgress('brew_methods', counts.brewMethods, rows.length);
-      }
+      await runBlock('brew_methods', async (stats) => {
+        for (const r of rows) {
+          if (!overrideExisting && existingIds.has(r.id)) {
+            stats.skipped++;
+            continue;
+          }
+          const t0 = Date.now();
+          try {
+            const title = await translateText(r.title, targetLang);
+            const description = await translateText(r.description || '', targetLang);
+            const info = JSON.parse(r.info || '{}');
+            const infoT = await translateInfo(info, targetLang);
+            const howToPrepare = JSON.parse(r.how_to_prepare || '[]');
+            const howT = await translateArray(howToPrepare, targetLang);
+            const proTips = JSON.parse(r.pro_tips || '[]');
+            const proT = await translateArray(proTips, targetLang);
+            const commonMistakes = JSON.parse(r.common_mistakes || '[]');
+            const commonT = await translateArray(commonMistakes, targetLang);
+            insBrew.run(r.id, title, description, JSON.stringify(infoT), JSON.stringify(howT), JSON.stringify(proT), JSON.stringify(commonT));
+            stats.translated++;
+            counts.brewMethods++;
+            setProgress('brew_methods', counts.brewMethods, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+          } catch (e) {
+            stats.error++;
+            console.error('Brew method translate error:', r.id, e.message);
+            setProgress('brew_methods', counts.brewMethods, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+          }
+        }
+      });
     }
 
-    translationProgress = { done: true, counts };
+    const finalLogLines = translationProgress.logLines || [];
+    translationProgress = { ...translationProgress, done: true, counts };
     targetDb.exec('COMMIT');
     sourceDb.close();
     targetDb.close();
-    res.json({ ok: true, lang: targetLang, counts });
+    res.json({ ok: true, lang: targetLang, counts, blockResults, logLines: finalLogLines });
   } catch (err) {
     console.error(err);
     translationProgress = null;
@@ -803,6 +891,71 @@ app.put('/api/translation-languages', (req, res) => {
   }
 });
 
+const TRANSLATION_PROMPT_EXTRA_PATH = join(dataDir, 'translation-prompt-extra.txt');
+const TRANSLATION_MODEL_PATH = join(dataDir, 'translation-model.txt');
+
+function getTranslationPromptExtra() {
+  try {
+    if (fs.existsSync(TRANSLATION_PROMPT_EXTRA_PATH)) {
+      return fs.readFileSync(TRANSLATION_PROMPT_EXTRA_PATH, 'utf8').trim();
+    }
+  } catch (_) {}
+  return '';
+}
+
+app.get('/api/translation-prompt-extra', (req, res) => {
+  try {
+    res.json({ extra: getTranslationPromptExtra() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/translation-prompt-extra', (req, res) => {
+  const extra = req.body && typeof req.body.extra === 'string' ? req.body.extra : '';
+  try {
+    fs.writeFileSync(TRANSLATION_PROMPT_EXTRA_PATH, extra.trim(), 'utf8');
+    res.json({ extra: getTranslationPromptExtra() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function getTranslationModel() {
+  try {
+    if (fs.existsSync(TRANSLATION_MODEL_PATH)) {
+      const id = fs.readFileSync(TRANSLATION_MODEL_PATH, 'utf8').trim();
+      if (TRANSLATION_MODEL_OPTIONS.some((m) => m.id === id)) return id;
+    }
+  } catch (_) {}
+  return 'gpt-4o-mini';
+}
+
+app.get('/api/translation-model', (req, res) => {
+  try {
+    res.json({ model: getTranslationModel(), options: TRANSLATION_MODEL_OPTIONS });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/translation-model', (req, res) => {
+  const model = req.body && typeof req.body.model === 'string' ? req.body.model.trim() : '';
+  if (!TRANSLATION_MODEL_OPTIONS.some((m) => m.id === model)) {
+    return res.status(400).json({ error: 'Invalid model id' });
+  }
+  try {
+    fs.writeFileSync(TRANSLATION_MODEL_PATH, model, 'utf8');
+    res.json({ model: getTranslationModel() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/export-db', (req, res) => {
   const lang = req.query.lang;
   const path = getDbPathForLang(lang);
@@ -813,6 +966,24 @@ app.get('/api/export-db', (req, res) => {
   res.download(path, filename, (err) => {
     if (err) console.error(err);
   });
+});
+
+app.delete('/api/databases/:lang', (req, res) => {
+  const lang = (req.params.lang || '').trim().toLowerCase();
+  if (!lang || lang === 'en') {
+    return res.status(400).json({ error: 'Cannot delete main database (en)' });
+  }
+  const path = getDbPathForLang(lang);
+  if (!fs.existsSync(path)) {
+    return res.status(404).json({ error: 'Database not found' });
+  }
+  try {
+    fs.unlinkSync(path);
+    res.json({ ok: true, lang });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/import-json', upload.single('file'), (req, res) => {
