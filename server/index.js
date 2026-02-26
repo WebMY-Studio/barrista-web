@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
 import { sanitizeDrink } from './sanitize.js';
+import { translateText, translateArray, translateInfo } from './translator.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -53,6 +54,36 @@ function getAvailableLanguages() {
     if (m) langs.push({ code: m[1] });
   });
   return langs.sort((a, b) => a.code.localeCompare(b.code));
+}
+
+const TRANSLATION_LANGUAGES_PATH = join(dataDir, 'translation-languages.json');
+
+let translationProgress = null;
+const DEFAULT_TRANSLATION_LANGUAGES = [
+  { code: 'ru', label: 'Russian' },
+  { code: 'fr', label: 'French' },
+  { code: 'de', label: 'German' },
+  { code: 'it', label: 'Italian' },
+  { code: 'pl', label: 'Polish' },
+  { code: 'pt', label: 'Portuguese' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'tr', label: 'Turkish' },
+];
+
+function getTranslationLanguages() {
+  if (!fs.existsSync(TRANSLATION_LANGUAGES_PATH)) return DEFAULT_TRANSLATION_LANGUAGES;
+  try {
+    const raw = fs.readFileSync(TRANSLATION_LANGUAGES_PATH, 'utf8');
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : DEFAULT_TRANSLATION_LANGUAGES;
+  } catch {
+    return DEFAULT_TRANSLATION_LANGUAGES;
+  }
+}
+
+function saveTranslationLanguages(list) {
+  const arr = Array.isArray(list) ? list : [];
+  fs.writeFileSync(TRANSLATION_LANGUAGES_PATH, JSON.stringify(arr, null, 2), 'utf8');
 }
 
 const db = new Database(dbPath);
@@ -488,10 +519,284 @@ app.get('/api/download-all-images', (req, res) => {
   archive.finalize();
 });
 
+
+function ensureTables(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS drinks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      ingredients TEXT NOT NULL,
+      instructions TEXT NOT NULL,
+      dish_id TEXT NOT NULL,
+      portions_amount INTEGER NOT NULL,
+      categories TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dishes (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      volume TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS categories (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS brew_methods (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      info TEXT NOT NULL,
+      how_to_prepare TEXT NOT NULL,
+      pro_tips TEXT NOT NULL,
+      common_mistakes TEXT NOT NULL
+    )
+  `);
+}
+
+app.get('/api/translation-progress', (req, res) => {
+  try {
+    res.json(translationProgress);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/translate', async (req, res) => {
+  const { lang, brewMethods, drinks, categories, dishes, overrideExisting } = req.body || {};
+  const targetLang = typeof lang === 'string' ? lang.trim().toLowerCase() : '';
+  const allowedCodes = getTranslationLanguages().map((x) => x.code);
+  if (!targetLang || !allowedCodes.includes(targetLang)) {
+    return res.status(400).json({ error: 'Invalid or missing lang. Configure languages in Translation languages.' });
+  }
+  const doBrew = !!brewMethods;
+  const doDrinks = !!drinks;
+  const doCategories = !!categories;
+  const doDishes = !!dishes;
+  if (!doBrew && !doDrinks && !doCategories && !doDishes) {
+    return res.status(400).json({ error: 'Select at least one: brewMethods, drinks, categories, dishes' });
+  }
+  const sourcePath = getDbPathForLang('en');
+  if (!fs.existsSync(sourcePath)) {
+    return res.status(400).json({ error: 'Source database (en) not found' });
+  }
+  translationProgress = { step: 'starting', current: 0, total: 0 };
+  let sourceDb;
+  let targetDb;
+  try {
+    sourceDb = new Database(sourcePath);
+    const targetPath = getDbPathForLang(targetLang);
+    targetDb = new Database(targetPath);
+    ensureTables(targetDb);
+    targetDb.exec('BEGIN');
+
+    const counts = { categories: 0, dishes: 0, drinks: 0, brewMethods: 0 };
+
+    const setProgress = (step, current, total) => {
+      translationProgress = { step, current, total };
+    };
+
+    if (doCategories) {
+      const rows = sourceDb.prepare('SELECT * FROM categories').all();
+      if (overrideExisting) targetDb.exec('DELETE FROM categories');
+      const existingIds = overrideExisting ? new Set() : new Set((targetDb.prepare('SELECT id FROM categories').all()).map((r) => r.id));
+      const insCat = targetDb.prepare('INSERT OR REPLACE INTO categories (id, title) VALUES (?, ?)');
+      setProgress('categories', 0, rows.length);
+      for (const r of rows) {
+        if (!overrideExisting && existingIds.has(r.id)) continue;
+        const title = await translateText(r.title, targetLang);
+        insCat.run(r.id, title);
+        counts.categories++;
+        setProgress('categories', counts.categories, rows.length);
+      }
+    }
+
+    if (doDishes) {
+      const rows = sourceDb.prepare('SELECT * FROM dishes').all();
+      if (overrideExisting) targetDb.exec('DELETE FROM dishes');
+      const existingIds = overrideExisting ? new Set() : new Set((targetDb.prepare('SELECT id FROM dishes').all()).map((r) => r.id));
+      const insDish = targetDb.prepare('INSERT OR REPLACE INTO dishes (id, title, description, volume) VALUES (?, ?, ?, ?)');
+      setProgress('dishes', 0, rows.length);
+      for (const r of rows) {
+        if (!overrideExisting && existingIds.has(r.id)) continue;
+        const title = await translateText(r.title, targetLang);
+        const description = await translateText(r.description || '', targetLang);
+        const volume = await translateText(r.volume || '', targetLang);
+        insDish.run(r.id, title, description, volume);
+        counts.dishes++;
+        setProgress('dishes', counts.dishes, rows.length);
+      }
+    }
+
+    if (doDrinks) {
+      const rows = sourceDb.prepare('SELECT * FROM drinks').all();
+      if (overrideExisting) targetDb.exec('DELETE FROM drinks');
+      const existingIds = overrideExisting ? new Set() : new Set((targetDb.prepare('SELECT id FROM drinks').all()).map((r) => r.id));
+      const insDrink = targetDb.prepare(`
+        INSERT OR REPLACE INTO drinks (id, title, ingredients, instructions, dish_id, portions_amount, categories)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      setProgress('drinks', 0, rows.length);
+      for (const r of rows) {
+        if (!overrideExisting && existingIds.has(r.id)) continue;
+        const title = await translateText(r.title, targetLang);
+        const ingredients = JSON.parse(r.ingredients || '[]');
+        const ingredientsT = await translateArray(ingredients, targetLang);
+        const instructions = JSON.parse(r.instructions || '[]');
+        const instructionsT = await translateArray(instructions, targetLang);
+        insDrink.run(r.id, title, JSON.stringify(ingredientsT), JSON.stringify(instructionsT), r.dish_id, r.portions_amount, r.categories);
+        counts.drinks++;
+        setProgress('drinks', counts.drinks, rows.length);
+      }
+    }
+
+    if (doBrew) {
+      const rows = sourceDb.prepare('SELECT * FROM brew_methods').all();
+      if (overrideExisting) targetDb.exec('DELETE FROM brew_methods');
+      const existingIds = overrideExisting ? new Set() : new Set((targetDb.prepare('SELECT id FROM brew_methods').all()).map((r) => r.id));
+      const insBrew = targetDb.prepare(`
+        INSERT OR REPLACE INTO brew_methods (id, title, description, info, how_to_prepare, pro_tips, common_mistakes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      setProgress('brew_methods', 0, rows.length);
+      for (const r of rows) {
+        if (!overrideExisting && existingIds.has(r.id)) continue;
+        const title = await translateText(r.title, targetLang);
+        const description = await translateText(r.description || '', targetLang);
+        const info = JSON.parse(r.info || '{}');
+        const infoT = await translateInfo(info, targetLang);
+        const howToPrepare = JSON.parse(r.how_to_prepare || '[]');
+        const howT = await translateArray(howToPrepare, targetLang);
+        const proTips = JSON.parse(r.pro_tips || '[]');
+        const proT = await translateArray(proTips, targetLang);
+        const commonMistakes = JSON.parse(r.common_mistakes || '[]');
+        const commonT = await translateArray(commonMistakes, targetLang);
+        insBrew.run(r.id, title, description, JSON.stringify(infoT), JSON.stringify(howT), JSON.stringify(proT), JSON.stringify(commonT));
+        counts.brewMethods++;
+        setProgress('brew_methods', counts.brewMethods, rows.length);
+      }
+    }
+
+    translationProgress = { done: true, counts };
+    targetDb.exec('COMMIT');
+    sourceDb.close();
+    targetDb.close();
+    res.json({ ok: true, lang: targetLang, counts });
+  } catch (err) {
+    console.error(err);
+    translationProgress = null;
+    if (targetDb) {
+      try {
+        targetDb.exec('ROLLBACK');
+      } catch (_) {}
+      targetDb.close();
+    }
+    if (sourceDb) sourceDb.close();
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/languages', (req, res) => {
   try {
     const list = getAvailableLanguages().filter((l) => fs.existsSync(getDbPathForLang(l.code)));
     res.json(list);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function getIdsFromTable(db, table) {
+  try {
+    const rows = db.prepare(`SELECT id FROM ${table}`).all();
+    return new Set(rows.map((r) => r.id));
+  } catch {
+    return new Set();
+  }
+}
+
+app.get('/api/check-translation-integrity', (req, res) => {
+  try {
+    const enPath = getDbPathForLang('en');
+    if (!fs.existsSync(enPath)) {
+      return res.json({ log: 'Main database (en) not found. Nothing to compare.' });
+    }
+    const enDb = new Database(enPath);
+    ensureTables(enDb);
+    const enCategories = getIdsFromTable(enDb, 'categories');
+    const enDishes = getIdsFromTable(enDb, 'dishes');
+    const enDrinks = getIdsFromTable(enDb, 'drinks');
+    const enBrewMethods = getIdsFromTable(enDb, 'brew_methods');
+    enDb.close();
+
+    const allLangs = getAvailableLanguages().filter((l) => fs.existsSync(getDbPathForLang(l.code)));
+    const translatedLangs = allLangs.filter((l) => l.code !== 'en').sort((a, b) => a.code.localeCompare(b.code));
+    if (translatedLangs.length === 0) {
+      return res.json({ log: 'No translated databases found (only en or no DBs).' });
+    }
+
+    const lines = [];
+    let allGood = true;
+    for (const { code } of translatedLangs) {
+      const path = getDbPathForLang(code);
+      const db = new Database(path);
+      ensureTables(db);
+      const cat = getIdsFromTable(db, 'categories');
+      const dish = getIdsFromTable(db, 'dishes');
+      const drink = getIdsFromTable(db, 'drinks');
+      const brew = getIdsFromTable(db, 'brew_methods');
+      db.close();
+
+      const missingCat = [...enCategories].filter((id) => !cat.has(id));
+      const missingDish = [...enDishes].filter((id) => !dish.has(id));
+      const missingDrink = [...enDrinks].filter((id) => !drink.has(id));
+      const missingBrew = [...enBrewMethods].filter((id) => !brew.has(id));
+      if (missingCat.length || missingDish.length || missingDrink.length || missingBrew.length) {
+        allGood = false;
+        lines.push(`barrista_${code}.db:`);
+        if (missingCat.length) lines.push(`  missing categories: ${missingCat.join(', ')}`);
+        if (missingDish.length) lines.push(`  missing dishes: ${missingDish.join(', ')}`);
+        if (missingDrink.length) lines.push(`  missing drinks: ${missingDrink.join(', ')}`);
+        if (missingBrew.length) lines.push(`  missing brew_methods: ${missingBrew.join(', ')}`);
+        lines.push('');
+      }
+    }
+    const log = allGood ? 'All good' : lines.join('\n').trim();
+    res.json({ log });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/translation-languages', (req, res) => {
+  try {
+    res.json(getTranslationLanguages());
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/translation-languages', (req, res) => {
+  const list = req.body;
+  if (!Array.isArray(list)) {
+    return res.status(400).json({ error: 'Body must be an array of { code, label }' });
+  }
+  const valid = list.every((x) => x && typeof x.code === 'string' && typeof x.label === 'string');
+  if (!valid) {
+    return res.status(400).json({ error: 'Each item must have code and label (strings)' });
+  }
+  try {
+    const normalized = list.map((x) => ({ code: String(x.code).trim().toLowerCase(), label: String(x.label).trim() })).filter((x) => x.code);
+    saveTranslationLanguages(normalized);
+    res.json(normalized);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });

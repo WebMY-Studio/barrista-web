@@ -165,6 +165,59 @@ body {
   color: #555;
 }
 
+.dashboard-translations-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.dashboard-translations-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+}
+
+.dashboard-translations-lang-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dashboard-translations-select {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.dashboard-translations-actions {
+  align-items: center;
+}
+
+.dashboard-translation-progress {
+  font-size: 0.9rem;
+  color: #555;
+  margin-left: 0.5rem;
+}
+
+.dashboard-integrity-log {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: #fff;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
+}
+
+.dashboard-integrity-pre {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: auto;
+}
+
 .dashboard-actions {
   margin-bottom: 1.5rem;
   display: flex;
@@ -971,4 +1024,53 @@ body {
   .add-item {
     flex-direction: column;
   }
+}
+
+.page-translation-languages h2 {
+  margin-bottom: 0.5rem;
+  font-size: 1.25rem;
+  color: #333;
+}
+
+.translation-languages-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.translation-languages-table {
+  width: 100%;
+  max-width: 480px;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.translation-languages-table th,
+.translation-languages-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}
+
+.translation-languages-table th {
+  font-weight: 600;
+  color: #555;
+  font-size: 0.9rem;
+}
+
+.translation-lang-code {
+  width: 80px;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.translation-lang-label {
+  min-width: 160px;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
 }

@@ -313,6 +313,21 @@ export async function getAvailableLanguages(): Promise<LanguageOption[]> {
   return res.json();
 }
 
+export type TranslationLanguageOption = { code: string; label: string };
+
+export async function getTranslationLanguages(): Promise<TranslationLanguageOption[]> {
+  const res = await fetchApi('/api/translation-languages');
+  return res.json();
+}
+
+export async function saveTranslationLanguages(list: TranslationLanguageOption[]): Promise<TranslationLanguageOption[]> {
+  const res = await fetchApi('/api/translation-languages', {
+    method: 'PUT',
+    body: JSON.stringify(list),
+  });
+  return res.json();
+}
+
 export async function downloadDbFile(lang?: string): Promise<void> {
   const base = getBase().replace(/\/$/, '');
   const url = lang ? `${base}/api/export-db?lang=${encodeURIComponent(lang)}` : `${base}/api/export-db`;
@@ -370,5 +385,58 @@ export async function importJson(file: File, lang: string = 'en'): Promise<{ ok:
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Import failed');
+  return data;
+}
+
+export type TranslationOptions = {
+  lang: string;
+  brewMethods: boolean;
+  drinks: boolean;
+  categories: boolean;
+  dishes: boolean;
+  overrideExisting: boolean;
+};
+
+export type TranslationResult = {
+  ok: boolean;
+  lang: string;
+  counts: { categories: number; dishes: number; drinks: number; brewMethods: number };
+};
+
+export type TranslationProgress = {
+  step?: string;
+  current?: number;
+  total?: number;
+  done?: boolean;
+  counts?: { categories: number; dishes: number; drinks: number; brewMethods: number };
+};
+
+export async function getTranslationProgress(): Promise<TranslationProgress | null> {
+  const res = await fetchApi('/api/translation-progress');
+  const data = await res.json();
+  return data ?? null;
+}
+
+/** Check translated DBs for missing entities vs en. Returns log text. */
+export async function checkTranslationIntegrity(): Promise<{ log: string }> {
+  const res = await fetchApi('/api/check-translation-integrity');
+  return res.json();
+}
+
+/** Start translation from en to target language. Creates target DB if missing. */
+export async function startTranslation(opts: TranslationOptions): Promise<TranslationResult> {
+  const res = await fetchApi('/api/translate', {
+    method: 'POST',
+    body: JSON.stringify({
+      lang: opts.lang,
+      brewMethods: opts.brewMethods,
+      drinks: opts.drinks,
+      categories: opts.categories,
+      dishes: opts.dishes,
+      overrideExisting: opts.overrideExisting,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Translation failed');
   return data;
 }

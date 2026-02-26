@@ -11,6 +11,7 @@
     "sanitize-db": "node server/sanitize-db.js",
     "import-dishes": "node server/import-dishes.js",
     "import-categories": "node server/import-categories.js",
+    "translate-db-es": "node server/translate-db-to-spanish.js",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -6,6 +6,7 @@ import { DrinksPage } from './pages/DrinksPage';
 import { DishesPage } from './pages/DishesPage';
 import { CategoriesPage } from './pages/CategoriesPage';
 import { BrewMethodsPage } from './pages/BrewMethodsPage';
+import { TranslationLanguagesPage } from './pages/TranslationLanguagesPage';
 import { LogOut } from 'lucide-react';
 
 function AppContent() {
@@ -38,6 +39,9 @@ function AppContent() {
             <NavLink to="/brew-methods" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
               Brew methods
             </NavLink>
+            <NavLink to="/translation-languages" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}>
+              Translation languages
+            </NavLink>
             <button type="button" onClick={logout} className="nav-link nav-logout" title="Sign out">
               <LogOut size={18} />
             </button>
@@ -51,6 +55,7 @@ function AppContent() {
             <Route path="/dishes" element={<DishesPage />} />
             <Route path="/categories" element={<CategoriesPage />} />
             <Route path="/brew-methods" element={<BrewMethodsPage />} />
+            <Route path="/translation-languages" element={<TranslationLanguagesPage />} />
           </Routes>
         </main>
       </div>

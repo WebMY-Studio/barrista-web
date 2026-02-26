@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Coffee, UtensilsCrossed, Tags, Download, Loader, Upload, ImagePlus } from 'lucide-react';
-import { getAvailableLanguages, downloadDbFile, downloadJsonForLanguage, importJson, importDrinkImages, importCategoryImages, importDishImages, importBrewMethodImages, downloadAllImages } from '../services/api';
+import { getAvailableLanguages, downloadDbFile, downloadJsonForLanguage, importJson, importDrinkImages, importCategoryImages, importDishImages, importBrewMethodImages, downloadAllImages, startTranslation, getTranslationLanguages, getTranslationProgress, checkTranslationIntegrity, type TranslationLanguageOption, type TranslationProgress } from '../services/api';
 
 export function Dashboard() {
   const [languages, setLanguages] = useState<{ code: string }[]>([]);
@@ -15,7 +15,19 @@ export function Dashboard() {
   const [importingBrewMethodImages, setImportingBrewMethodImages] = useState(false);
   const [downloadingAllImages, setDownloadingAllImages] = useState(false);
   const [importLang, setImportLang] = useState('en');
+  const [translationLang, setTranslationLang] = useState('es');
+  const [translationBrewMethods, setTranslationBrewMethods] = useState(true);
+  const [translationDrinks, setTranslationDrinks] = useState(true);
+  const [translationCategories, setTranslationCategories] = useState(true);
+  const [translationDishes, setTranslationDishes] = useState(true);
+  const [translationOverride, setTranslationOverride] = useState(false);
+  const [translating, setTranslating] = useState(false);
+  const [translationLanguages, setTranslationLanguages] = useState<TranslationLanguageOption[]>([]);
+  const [translationProgress, setTranslationProgress] = useState<TranslationProgress | null>(null);
+  const [integrityLog, setIntegrityLog] = useState<string | null>(null);
+  const [integrityLoading, setIntegrityLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const translationProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const imagesInputRef = useRef<HTMLInputElement>(null);
   const categoryImagesInputRef = useRef<HTMLInputElement>(null);
   const dishImagesInputRef = useRef<HTMLInputElement>(null);
@@ -27,6 +39,18 @@ export function Dashboard() {
       .catch((err) => console.error(err))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    getTranslationLanguages()
+      .then(setTranslationLanguages)
+      .catch((err) => console.error(err));
+  }, []);
+
+  useEffect(() => {
+    if (translationLanguages.length > 0 && !translationLanguages.some((l) => l.code === translationLang)) {
+      setTranslationLang(translationLanguages[0].code);
+    }
+  }, [translationLanguages, translationLang]);
 
   const toggleLang = (code: string) => {
     setSelectedLangs((prev) =>
@@ -171,6 +195,71 @@ export function Dashboard() {
     }
   };
 
+  const handleStartTranslation = async () => {
+    if (!translationBrewMethods && !translationDrinks && !translationCategories && !translationDishes) {
+      alert('Select at least one: Brew methods, Drinks, Categories, Dishes');
+      return;
+    }
+    setTranslationProgress(null);
+    setTranslating(true);
+    translationProgressIntervalRef.current = setInterval(async () => {
+      try {
+        const p = await getTranslationProgress();
+        if (p) setTranslationProgress(p);
+      } catch {
+        // ignore
+      }
+    }, 1500);
+    try {
+      const result = await startTranslation({
+        lang: translationLang,
+        brewMethods: translationBrewMethods,
+        drinks: translationDrinks,
+        categories: translationCategories,
+        dishes: translationDishes,
+        overrideExisting: translationOverride,
+      });
+      if (translationProgressIntervalRef.current) {
+        clearInterval(translationProgressIntervalRef.current);
+        translationProgressIntervalRef.current = null;
+      }
+      setTranslationProgress({ done: true, counts: result.counts });
+      await getAvailableLanguages().then(setLanguages);
+      const msg = `Translation to ${translationLang} done. Categories: ${result.counts.categories}, Dishes: ${result.counts.dishes}, Drinks: ${result.counts.drinks}, Brew methods: ${result.counts.brewMethods}`;
+      alert(msg);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Translation failed');
+    } finally {
+      if (translationProgressIntervalRef.current) {
+        clearInterval(translationProgressIntervalRef.current);
+        translationProgressIntervalRef.current = null;
+      }
+      setTranslating(false);
+    }
+  };
+
+  const handleCheckIntegrity = async () => {
+    setIntegrityLoading(true);
+    setIntegrityLog(null);
+    try {
+      const { log } = await checkTranslationIntegrity();
+      setIntegrityLog(log);
+      const blob = new Blob([log], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'translation-integrity-report.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Check failed');
+    } finally {
+      setIntegrityLoading(false);
+    }
+  };
+
   return (
     <div className="dashboard">
       <h2>Home</h2>
@@ -185,9 +274,11 @@ export function Dashboard() {
               disabled={importing}
             >
               <option value="en">Main (en)</option>
-              {languages.filter((l) => l.code !== 'en').map((l) => (
-                <option key={l.code} value={l.code}>{l.code}</option>
-              ))}
+              {translationLanguages
+                .filter((l) => l.code !== 'en')
+                .map((l) => (
+                  <option key={l.code} value={l.code}>{l.label} ({l.code})</option>
+                ))}
             </select>
           </label>
           <input
@@ -251,7 +342,36 @@ export function Dashboard() {
                   {exporting === 'json' ? <Loader size={16} className="spinner" /> : <Download size={16} />}
                   Export JSON for selected languages
                 </button>
+                <button
+                  type="button"
+                  onClick={handleCheckIntegrity}
+                  disabled={integrityLoading}
+                  className="btn-secondary"
+                >
+                  {integrityLoading ? <Loader size={16} className="spinner" /> : <Download size={16} />}
+                  Check translation integrity
+                </button>
               </div>
+              {integrityLog !== null && (
+                <div className="dashboard-integrity-log">
+                  <pre className="dashboard-integrity-pre">{integrityLog}</pre>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const blob = new Blob([integrityLog], { type: 'text/plain;charset=utf-8' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'translation-integrity-report.txt';
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="btn-secondary"
+                  >
+                    <Download size={16} /> Download log
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -340,6 +460,99 @@ export function Dashboard() {
             {downloadingAllImages ? <Loader size={16} className="spinner" /> : <Download size={16} />}
             Download all images
           </button>
+        </div>
+      </div>
+      <div className="dashboard-block dashboard-translations">
+        <h3>Translations</h3>
+        <div className="dashboard-translations-row">
+          <div className="dashboard-translations-checkboxes">
+            <label className="dashboard-lang-check">
+              <input
+                type="checkbox"
+                checked={translationBrewMethods}
+                onChange={(e) => setTranslationBrewMethods(e.target.checked)}
+                disabled={translating}
+              />
+              <span>Brew methods</span>
+            </label>
+            <label className="dashboard-lang-check">
+              <input
+                type="checkbox"
+                checked={translationDrinks}
+                onChange={(e) => setTranslationDrinks(e.target.checked)}
+                disabled={translating}
+              />
+              <span>Drinks</span>
+            </label>
+            <label className="dashboard-lang-check">
+              <input
+                type="checkbox"
+                checked={translationCategories}
+                onChange={(e) => setTranslationCategories(e.target.checked)}
+                disabled={translating}
+              />
+              <span>Categories</span>
+            </label>
+            <label className="dashboard-lang-check">
+              <input
+                type="checkbox"
+                checked={translationDishes}
+                onChange={(e) => setTranslationDishes(e.target.checked)}
+                disabled={translating}
+              />
+              <span>Dishes</span>
+            </label>
+          </div>
+        </div>
+        <div className="dashboard-translations-row">
+          <label className="dashboard-translations-lang-label">
+            Language:
+            <select
+              value={translationLang}
+              onChange={(e) => setTranslationLang(e.target.value)}
+              disabled={translating}
+              className="dashboard-translations-select"
+            >
+              {translationLanguages.length === 0 ? (
+                <option value="">—</option>
+              ) : (
+                translationLanguages.map((l) => (
+                  <option key={l.code} value={l.code}>{l.label}</option>
+                ))
+              )}
+            </select>
+          </label>
+          <label className="dashboard-lang-check">
+            <input
+              type="checkbox"
+              checked={translationOverride}
+              onChange={(e) => setTranslationOverride(e.target.checked)}
+              disabled={translating}
+            />
+            <span>Override existing</span>
+          </label>
+        </div>
+        <div className="dashboard-translations-row dashboard-translations-actions">
+          <button
+            type="button"
+            onClick={handleStartTranslation}
+            disabled={translating || translationLanguages.length === 0 || (!translationBrewMethods && !translationDrinks && !translationCategories && !translationDishes)}
+            className="btn-primary"
+          >
+            {translating ? <Loader size={16} className="spinner" /> : null}
+            Start translation
+          </button>
+          {(translating || translationProgress) && (
+            <span className="dashboard-translation-progress">
+              {translationProgress?.done ? (
+                <>Done. Categories: {translationProgress.counts?.categories ?? 0}, Dishes: {translationProgress.counts?.dishes ?? 0}, Drinks: {translationProgress.counts?.drinks ?? 0}, Brew methods: {translationProgress.counts?.brewMethods ?? 0}</>
+              ) : translationProgress?.step ? (
+                <>Translating: {translationProgress.step} {translationProgress.current ?? 0}/{translationProgress.total ?? 0}</>
+              ) : (
+                <>Starting…</>
+              )}
+            </span>
+          )}
         </div>
       </div>
       <div className="dashboard-cards">
