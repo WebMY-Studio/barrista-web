@@ -59,6 +59,14 @@ function getAvailableLanguages() {
 const TRANSLATION_LANGUAGES_PATH = join(dataDir, 'translation-languages.json');
 
 let translationProgress = null;
+/** Set by POST /api/translation-stop: { saveResults: boolean }. Checked by translate handler. */
+let translationStopRequested = null;
+
+function TranslationStopError(saveResults) {
+  this.saveResults = saveResults;
+  this.name = 'TranslationStopError';
+}
+
 const DEFAULT_TRANSLATION_LANGUAGES = [
   { code: 'ru', label: 'Russian' },
   { code: 'fr', label: 'French' },
@@ -568,6 +576,21 @@ app.get('/api/translation-progress', (req, res) => {
   }
 });
 
+app.post('/api/translation-stop', (req, res) => {
+  try {
+    const saveResults = Boolean(req.body && req.body.saveResults);
+    if (translationProgress && !translationProgress.done) {
+      translationStopRequested = { saveResults };
+      res.json({ ok: true });
+    } else {
+      res.json({ ok: false, error: 'No translation in progress' });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/translate', async (req, res) => {
   const { lang, brewMethods, drinks, categories, dishes, overrideExisting } = req.body || {};
   const targetLang = typeof lang === 'string' ? lang.trim().toLowerCase() : '';
@@ -597,22 +620,33 @@ app.post('/api/translate', async (req, res) => {
     const targetPath = getDbPathForLang(targetLang);
     targetDb = new Database(targetPath);
     ensureTables(targetDb);
-    targetDb.exec('BEGIN');
+
+    const maybeStop = () => {
+      if (translationStopRequested) {
+        const save = translationStopRequested.saveResults;
+        translationStopRequested = null;
+        throw new TranslationStopError(save);
+      }
+    };
 
     const counts = { categories: 0, dishes: 0, drinks: 0, brewMethods: 0 };
     const blockResults = {};
 
     const setProgress = (step, current, total, extra = {}) => {
-      const remaining = Math.max(0, total - current);
-      const etaSeconds = total > 0 && RATES_SEC_PER_ITEM[step] != null ? Math.round(remaining * RATES_SEC_PER_ITEM[step]) : null;
+      const skipped = extra.skipped !== undefined ? extra.skipped : (translationProgress.skipped ?? 0);
+      const toProcess = Math.max(0, total - skipped);
+      const remaining = Math.max(0, toProcess - current);
+      const etaSeconds = toProcess > 0 && RATES_SEC_PER_ITEM[step] != null ? Math.round(remaining * RATES_SEC_PER_ITEM[step]) : null;
       translationProgress = {
         ...translationProgress,
         step,
         current,
         total,
+        skipped,
         etaSeconds,
         lastId: extra.lastId !== undefined ? extra.lastId : translationProgress.lastId,
         lastItemMs: extra.lastItemMs !== undefined ? extra.lastItemMs : translationProgress.lastItemMs,
+        counts: { ...counts },
       };
     };
 
@@ -638,15 +672,19 @@ app.post('/api/translate', async (req, res) => {
     };
 
     if (doCategories) {
+      targetDb.exec('BEGIN');
+      maybeStop();
       const rows = sourceDb.prepare('SELECT * FROM categories').all();
       if (overrideExisting) targetDb.exec('DELETE FROM categories');
       const existingIds = overrideExisting ? new Set() : new Set((targetDb.prepare('SELECT id FROM categories').all()).map((r) => r.id));
       const insCat = targetDb.prepare('INSERT OR REPLACE INTO categories (id, title) VALUES (?, ?)');
-      setProgress('categories', 0, rows.length);
+      setProgress('categories', 0, rows.length, { skipped: 0 });
       await runBlock('categories', async (stats) => {
         for (const r of rows) {
+          maybeStop();
           if (!overrideExisting && existingIds.has(r.id)) {
             stats.skipped++;
+            setProgress('categories', counts.categories, rows.length, { skipped: stats.skipped });
             continue;
           }
           const t0 = Date.now();
@@ -655,26 +693,32 @@ app.post('/api/translate', async (req, res) => {
             insCat.run(r.id, title);
             stats.translated++;
             counts.categories++;
-            setProgress('categories', counts.categories, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+            setProgress('categories', counts.categories, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0, skipped: stats.skipped });
           } catch (e) {
             stats.error++;
             console.error('Category translate error:', r.id, e.message);
-            setProgress('categories', counts.categories, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+            setProgress('categories', counts.categories, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0, skipped: stats.skipped });
           }
         }
       });
+      targetDb.exec('COMMIT');
+      maybeStop();
     }
 
     if (doDishes) {
+      targetDb.exec('BEGIN');
+      maybeStop();
       const rows = sourceDb.prepare('SELECT * FROM dishes').all();
       if (overrideExisting) targetDb.exec('DELETE FROM dishes');
       const existingIds = overrideExisting ? new Set() : new Set((targetDb.prepare('SELECT id FROM dishes').all()).map((r) => r.id));
       const insDish = targetDb.prepare('INSERT OR REPLACE INTO dishes (id, title, description, volume) VALUES (?, ?, ?, ?)');
-      setProgress('dishes', 0, rows.length);
+      setProgress('dishes', 0, rows.length, { skipped: 0 });
       await runBlock('dishes', async (stats) => {
         for (const r of rows) {
+          maybeStop();
           if (!overrideExisting && existingIds.has(r.id)) {
             stats.skipped++;
+            setProgress('dishes', counts.dishes, rows.length, { skipped: stats.skipped });
             continue;
           }
           const t0 = Date.now();
@@ -685,17 +729,21 @@ app.post('/api/translate', async (req, res) => {
             insDish.run(r.id, title, description, volume);
             stats.translated++;
             counts.dishes++;
-            setProgress('dishes', counts.dishes, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+            setProgress('dishes', counts.dishes, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0, skipped: stats.skipped });
           } catch (e) {
             stats.error++;
             console.error('Dish translate error:', r.id, e.message);
-            setProgress('dishes', counts.dishes, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+            setProgress('dishes', counts.dishes, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0, skipped: stats.skipped });
           }
         }
       });
+      targetDb.exec('COMMIT');
+      maybeStop();
     }
 
     if (doDrinks) {
+      targetDb.exec('BEGIN');
+      maybeStop();
       const rows = sourceDb.prepare('SELECT * FROM drinks').all();
       if (overrideExisting) targetDb.exec('DELETE FROM drinks');
       const existingIds = overrideExisting ? new Set() : new Set((targetDb.prepare('SELECT id FROM drinks').all()).map((r) => r.id));
@@ -703,11 +751,13 @@ app.post('/api/translate', async (req, res) => {
         INSERT OR REPLACE INTO drinks (id, title, ingredients, instructions, dish_id, portions_amount, categories)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
-      setProgress('drinks', 0, rows.length);
+      setProgress('drinks', 0, rows.length, { skipped: 0 });
       await runBlock('drinks', async (stats) => {
         for (const r of rows) {
+          maybeStop();
           if (!overrideExisting && existingIds.has(r.id)) {
             stats.skipped++;
+            setProgress('drinks', counts.drinks, rows.length, { skipped: stats.skipped });
             continue;
           }
           const t0 = Date.now();
@@ -720,17 +770,21 @@ app.post('/api/translate', async (req, res) => {
             insDrink.run(r.id, title, JSON.stringify(ingredientsT), JSON.stringify(instructionsT), r.dish_id, r.portions_amount, r.categories);
             stats.translated++;
             counts.drinks++;
-            setProgress('drinks', counts.drinks, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+            setProgress('drinks', counts.drinks, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0, skipped: stats.skipped });
           } catch (e) {
             stats.error++;
             console.error('Drink translate error:', r.id, e.message);
-            setProgress('drinks', counts.drinks, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+            setProgress('drinks', counts.drinks, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0, skipped: stats.skipped });
           }
         }
       });
+      targetDb.exec('COMMIT');
+      maybeStop();
     }
 
     if (doBrew) {
+      targetDb.exec('BEGIN');
+      maybeStop();
       const rows = sourceDb.prepare('SELECT * FROM brew_methods').all();
       if (overrideExisting) targetDb.exec('DELETE FROM brew_methods');
       const existingIds = overrideExisting ? new Set() : new Set((targetDb.prepare('SELECT id FROM brew_methods').all()).map((r) => r.id));
@@ -738,11 +792,13 @@ app.post('/api/translate', async (req, res) => {
         INSERT OR REPLACE INTO brew_methods (id, title, description, info, how_to_prepare, pro_tips, common_mistakes)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
-      setProgress('brew_methods', 0, rows.length);
+      setProgress('brew_methods', 0, rows.length, { skipped: 0 });
       await runBlock('brew_methods', async (stats) => {
         for (const r of rows) {
+          maybeStop();
           if (!overrideExisting && existingIds.has(r.id)) {
             stats.skipped++;
+            setProgress('brew_methods', counts.brewMethods, rows.length, { skipped: stats.skipped });
             continue;
           }
           const t0 = Date.now();
@@ -760,23 +816,34 @@ app.post('/api/translate', async (req, res) => {
             insBrew.run(r.id, title, description, JSON.stringify(infoT), JSON.stringify(howT), JSON.stringify(proT), JSON.stringify(commonT));
             stats.translated++;
             counts.brewMethods++;
-            setProgress('brew_methods', counts.brewMethods, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+            setProgress('brew_methods', counts.brewMethods, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0, skipped: stats.skipped });
           } catch (e) {
             stats.error++;
             console.error('Brew method translate error:', r.id, e.message);
-            setProgress('brew_methods', counts.brewMethods, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0 });
+            setProgress('brew_methods', counts.brewMethods, rows.length, { lastId: r.id, lastItemMs: Date.now() - t0, skipped: stats.skipped });
           }
         }
       });
+      targetDb.exec('COMMIT');
     }
 
     const finalLogLines = translationProgress.logLines || [];
     translationProgress = { ...translationProgress, done: true, counts };
-    targetDb.exec('COMMIT');
     sourceDb.close();
     targetDb.close();
     res.json({ ok: true, lang: targetLang, counts, blockResults, logLines: finalLogLines });
   } catch (err) {
+    if (err instanceof TranslationStopError) {
+      if (targetDb) {
+        try {
+          targetDb.exec(err.saveResults ? 'COMMIT' : 'ROLLBACK');
+        } catch (_) {}
+        targetDb.close();
+      }
+      if (sourceDb) sourceDb.close();
+      translationProgress = { ...translationProgress, done: true, cancelled: true, saved: err.saveResults, counts: translationProgress?.counts };
+      return res.json({ cancelled: true, saved: err.saveResults });
+    }
     console.error(err);
     translationProgress = null;
     if (targetDb) {

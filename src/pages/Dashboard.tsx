@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Coffee, UtensilsCrossed, Tags, Download, Loader, Upload, ImagePlus, Trash2 } from 'lucide-react';
-import { getAvailableLanguages, downloadDbFile, downloadJsonForLanguage, importJson, importDrinkImages, importCategoryImages, importDishImages, importBrewMethodImages, downloadAllImages, startTranslation, getTranslationLanguages, getTranslationProgress, checkTranslationIntegrity, deleteDatabase, getTranslationPromptExtra, saveTranslationPromptExtra, getTranslationModel, saveTranslationModel, type TranslationLanguageOption, type TranslationProgress } from '../services/api';
+import { getAvailableLanguages, downloadDbFile, downloadJsonForLanguage, importJson, importDrinkImages, importCategoryImages, importDishImages, importBrewMethodImages, downloadAllImages, startTranslation, stopTranslation, getTranslationLanguages, getTranslationProgress, checkTranslationIntegrity, deleteDatabase, getTranslationPromptExtra, saveTranslationPromptExtra, getTranslationModel, saveTranslationModel, type TranslationLanguageOption, type TranslationProgress } from '../services/api';
 
 export function Dashboard() {
   const [languages, setLanguages] = useState<{ code: string }[]>([]);
@@ -33,6 +33,8 @@ export function Dashboard() {
   const [promptExtraSaving, setPromptExtraSaving] = useState(false);
   const [translationModel, setTranslationModel] = useState('');
   const [translationModelOptions, setTranslationModelOptions] = useState<{ id: string; label: string }[]>([]);
+  const [stopTranslationSaveResults, setStopTranslationSaveResults] = useState(true);
+  const [stoppingTranslation, setStoppingTranslation] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const translationProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const translationLogLineCountRef = useRef(0);
@@ -52,6 +54,63 @@ export function Dashboard() {
     getTranslationLanguages()
       .then(setTranslationLanguages)
       .catch((err) => console.error(err));
+  }, []);
+
+  // On mount: if a translation is already running (e.g. after refresh), show progress and Stop button
+  useEffect(() => {
+    let cancelled = false;
+    getTranslationProgress()
+      .then((p) => {
+        if (cancelled || !p || p.done) return;
+        setTranslating(true);
+        setTranslationProgress(p);
+        if (p.logLines?.length) {
+          translationLogLineCountRef.current = p.logLines.length;
+          setTranslationRunLog((prev) => (prev ? prev : `Translation in progress (reconnected).\n${(p.logLines ?? []).join('\n')}`));
+        } else {
+          setTranslationRunLog('Translation in progress (reconnected).');
+        }
+        translationProgressIntervalRef.current = setInterval(async () => {
+          try {
+            const next = await getTranslationProgress();
+            if (next) {
+              setTranslationProgress(next);
+              if (next.logLines && next.logLines.length > translationLogLineCountRef.current) {
+                const newLines = next.logLines.slice(translationLogLineCountRef.current);
+                translationLogLineCountRef.current = next.logLines.length;
+                setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + newLines.join('\n'));
+              }
+              if (next.done) {
+                if (translationProgressIntervalRef.current) {
+                  clearInterval(translationProgressIntervalRef.current);
+                  translationProgressIntervalRef.current = null;
+                }
+                setTranslating(false);
+                setStoppingTranslation(false);
+                if (next.logLines && next.logLines.length > translationLogLineCountRef.current) {
+                  const newLines = next.logLines.slice(translationLogLineCountRef.current);
+                  translationLogLineCountRef.current = next.logLines.length;
+                  setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + newLines.join('\n'));
+                }
+                const suffix = next.cancelled
+                  ? (next.saved ? 'Stopped. Results saved to DB.' : 'Stopped. Changes discarded.')
+                  : 'Done.';
+                setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + suffix);
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }, 1500);
+      })
+      .catch((err) => console.error(err));
+    return () => {
+      cancelled = true;
+      if (translationProgressIntervalRef.current) {
+        clearInterval(translationProgressIntervalRef.current);
+        translationProgressIntervalRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -226,6 +285,7 @@ export function Dashboard() {
     }
     setTranslationProgress(null);
     setTranslating(true);
+    setStoppingTranslation(false);
     const entities = [
       translationBrewMethods && 'brew_methods',
       translationDrinks && 'drinks',
@@ -270,14 +330,17 @@ export function Dashboard() {
         clearInterval(translationProgressIntervalRef.current);
         translationProgressIntervalRef.current = null;
       }
-      setTranslationProgress((prev) => ({ ...prev, done: true, counts: result.counts }));
+      setTranslationProgress((prev) => ({ ...prev, done: true, cancelled: result.cancelled, saved: result.saved, counts: result.counts }));
       if (result.logLines && result.logLines.length > translationLogLineCountRef.current) {
         const newLines = result.logLines.slice(translationLogLineCountRef.current);
         translationLogLineCountRef.current = result.logLines.length;
         setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + newLines.join('\n'));
       }
       await getAvailableLanguages().then(setLanguages);
-      setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + 'Done.');
+      const endMsg = result.cancelled
+        ? (result.saved ? 'Stopped. Results saved to DB.' : 'Stopped. Changes discarded.')
+        : 'Done.';
+      setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + endMsg);
     } catch (err) {
       console.error(err);
       const errMsg = err instanceof Error ? err.message : 'Translation failed';
@@ -291,19 +354,27 @@ export function Dashboard() {
     }
   };
 
+  const handleStopTranslation = async () => {
+    setStoppingTranslation(true);
+    try {
+      const r = await stopTranslation(stopTranslationSaveResults);
+      if (!r.ok) {
+        setStoppingTranslation(false);
+        alert(r.error || 'Failed to stop');
+      }
+    } catch (err) {
+      console.error(err);
+      setStoppingTranslation(false);
+      alert(err instanceof Error ? err.message : 'Failed to stop');
+    }
+  };
+
   const handleCheckIntegrity = async () => {
     setIntegrityLoading(true);
     setIntegrityLog(null);
     try {
       const { log } = await checkTranslationIntegrity();
       setIntegrityLog(log);
-      const blob = new Blob([log], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'translation-integrity-report.txt';
-      a.click();
-      URL.revokeObjectURL(url);
     } catch (err) {
       console.error(err);
       alert(err instanceof Error ? err.message : 'Check failed');
@@ -687,35 +758,6 @@ export function Dashboard() {
             <span>Override existing</span>
           </label>
         </div>
-        <div className="dashboard-translations-row dashboard-translations-actions">
-          <button
-            type="button"
-            onClick={handleStartTranslation}
-            disabled={translating || translationLanguages.length === 0 || (!translationBrewMethods && !translationDrinks && !translationCategories && !translationDishes)}
-            className="btn-primary"
-          >
-            {translating ? <Loader size={16} className="spinner" /> : null}
-            Start translation
-          </button>
-          {(translating || translationProgress) && (
-            <span className="dashboard-translation-progress">
-              {translationProgress?.done ? (
-                <>Done. Categories: {translationProgress.counts?.categories ?? 0}, Dishes: {translationProgress.counts?.dishes ?? 0}, Drinks: {translationProgress.counts?.drinks ?? 0}, Brew methods: {translationProgress.counts?.brewMethods ?? 0}</>
-              ) : translationProgress?.step ? (
-                <>
-                  Translating: {translationProgress.step === 'categories' ? 'Categories' : translationProgress.step === 'dishes' ? 'Dishes' : translationProgress.step === 'drinks' ? 'Drinks' : 'Brew methods'}{' '}
-                  {translationProgress.current ?? 0}/{translationProgress.total ?? 0}
-                  {translationProgress.lastId != null && (
-                    <> — {translationProgress.lastId} ({translationProgress.lastItemMs != null ? (translationProgress.lastItemMs >= 1000 ? `${(translationProgress.lastItemMs / 1000).toFixed(1)}s` : `${translationProgress.lastItemMs}ms`) : '?'})</>
-                  )}
-                  {translationProgress.etaSeconds != null && translationProgress.etaSeconds > 0 && <> · ETA: ~{translationProgress.etaSeconds}s</>}
-                </>
-              ) : (
-                <>Starting…</>
-              )}
-            </span>
-          )}
-        </div>
         {translationRunLog && (
           <div className="dashboard-integrity-log dashboard-translation-run-log">
             <pre className="dashboard-integrity-pre">{translationRunLog}</pre>
@@ -736,6 +778,65 @@ export function Dashboard() {
             </button>
           </div>
         )}
+        {(translating || translationProgress) && (
+          <div className="dashboard-translations-row dashboard-translation-progress-row">
+            <span className="dashboard-translation-progress">
+              {translationProgress?.done ? (
+                <>
+                  {translationProgress.cancelled
+                    ? (translationProgress.saved ? 'Stopped. Results saved to DB. ' : 'Stopped. Changes discarded. ')
+                    : 'Done. '}
+                  Categories: {translationProgress.counts?.categories ?? 0}, Dishes: {translationProgress.counts?.dishes ?? 0}, Drinks: {translationProgress.counts?.drinks ?? 0}, Brew methods: {translationProgress.counts?.brewMethods ?? 0}
+                </>
+              ) : translationProgress?.step ? (
+                <>
+                  Translating: {translationProgress.step === 'categories' ? 'Categories' : translationProgress.step === 'dishes' ? 'Dishes' : translationProgress.step === 'drinks' ? 'Drinks' : 'Brew methods'}{' '}
+                  {translationProgress.current ?? 0}/{(translationProgress.total ?? 0) - (translationProgress.skipped ?? 0)}
+                  {translationProgress.lastId != null && (
+                    <> — {translationProgress.lastId} ({translationProgress.lastItemMs != null ? (translationProgress.lastItemMs >= 1000 ? `${(translationProgress.lastItemMs / 1000).toFixed(1)}s` : `${translationProgress.lastItemMs}ms`) : '?'})</>
+                  )}
+                  {translationProgress.etaSeconds != null && translationProgress.etaSeconds > 0 && <> · ETA: ~{translationProgress.etaSeconds}s</>}
+                </>
+              ) : (
+                <>Starting…</>
+              )}
+            </span>
+          </div>
+        )}
+        <div className="dashboard-translations-row dashboard-translations-actions">
+          <button
+            type="button"
+            onClick={handleStartTranslation}
+            disabled={translating || translationLanguages.length === 0 || (!translationBrewMethods && !translationDrinks && !translationCategories && !translationDishes)}
+            className="btn-primary"
+          >
+            {translating && !stoppingTranslation ? <Loader size={16} className="spinner" /> : null}
+            Start translation
+          </button>
+          {(translating || (translationProgress && !translationProgress.done)) && (
+            <>
+              <button
+                type="button"
+                onClick={handleStopTranslation}
+                disabled={stoppingTranslation}
+                className="btn-secondary"
+                style={{ marginLeft: '0.5rem' }}
+              >
+                {stoppingTranslation ? <Loader size={16} className="spinner" /> : null}
+                Stop translation
+              </button>
+              <label className="dashboard-lang-check" style={{ marginLeft: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  checked={stopTranslationSaveResults}
+                  onChange={(e) => setStopTranslationSaveResults(e.target.checked)}
+                  disabled={stoppingTranslation}
+                />
+                <span>Save current results to DB (incl. partial block)</span>
+              </label>
+            </>
+          )}
+        </div>
       </div>
       <div className="dashboard-cards">
         <Link to="/drinks" className="dashboard-card">

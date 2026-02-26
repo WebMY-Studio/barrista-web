@@ -438,13 +438,18 @@ export type TranslationResult = {
   counts: { categories: number; dishes: number; drinks: number; brewMethods: number };
   blockResults?: Record<string, BlockStats>;
   logLines?: string[];
+  cancelled?: boolean;
+  saved?: boolean;
 };
 
 export type TranslationProgress = {
   step?: string;
   current?: number;
   total?: number;
+  skipped?: number;
   done?: boolean;
+  cancelled?: boolean;
+  saved?: boolean;
   counts?: { categories: number; dishes: number; drinks: number; brewMethods: number };
   logLines?: string[];
   etaSeconds?: number | null;
@@ -456,6 +461,16 @@ export async function getTranslationProgress(): Promise<TranslationProgress | nu
   const res = await fetchApi('/api/translation-progress');
   const data = await res.json();
   return data ?? null;
+}
+
+/** Request running translation to stop. saveResults: true = COMMIT current block, false = ROLLBACK. */
+export async function stopTranslation(saveResults: boolean): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetchApi('/api/translation-stop', {
+    method: 'POST',
+    body: JSON.stringify({ saveResults }),
+  });
+  const data = await res.json();
+  return data;
 }
 
 /** Check translated DBs for missing entities vs en. Returns log text. */
