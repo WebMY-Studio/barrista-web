@@ -44,6 +44,23 @@ function getDbPathForLang(lang) {
   return join(dataDir, `barrista_${lang}.db`);
 }
 
+/** Delete one row by id from the given table in all locale databases (all languages except en). */
+function deleteFromAllLocales(table, id) {
+  const langs = getTranslationLanguages().map((l) => l.code).filter((code) => code && code !== 'en');
+  for (const code of langs) {
+    const path = getDbPathForLang(code);
+    if (!fs.existsSync(path)) continue;
+    const localeDb = new Database(path);
+    try {
+      ensureTables(localeDb);
+      const stmt = localeDb.prepare(`DELETE FROM ${table} WHERE id = ?`);
+      stmt.run(id);
+    } finally {
+      localeDb.close();
+    }
+  }
+}
+
 /** List available languages from existing DB files (barrista_XX.db) */
 function getAvailableLanguages() {
   if (!fs.existsSync(dataDir)) return [];
@@ -219,11 +236,13 @@ app.post('/api/drinks', (req, res) => {
 
 app.delete('/api/drinks/:id', (req, res) => {
   try {
+    const id = req.params.id;
     const stmt = db.prepare('DELETE FROM drinks WHERE id = ?');
-    const result = stmt.run(req.params.id);
+    const result = stmt.run(id);
     if (result.changes === 0) {
       return res.status(404).json({ error: 'Not found' });
     }
+    deleteFromAllLocales('drinks', id);
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -294,9 +313,11 @@ app.post('/api/dishes', (req, res) => {
 
 app.delete('/api/dishes/:id', (req, res) => {
   try {
+    const id = req.params.id;
     const stmt = db.prepare('DELETE FROM dishes WHERE id = ?');
-    const result = stmt.run(req.params.id);
+    const result = stmt.run(id);
     if (result.changes === 0) return res.status(404).json({ error: 'Not found' });
+    deleteFromAllLocales('dishes', id);
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -368,9 +389,11 @@ app.post('/api/categories', (req, res) => {
 
 app.delete('/api/categories/:id', (req, res) => {
   try {
+    const id = req.params.id;
     const stmt = db.prepare('DELETE FROM categories WHERE id = ?');
-    const result = stmt.run(req.params.id);
+    const result = stmt.run(id);
     if (result.changes === 0) return res.status(404).json({ error: 'Not found' });
+    deleteFromAllLocales('categories', id);
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -444,9 +467,11 @@ app.post('/api/brew-methods', (req, res) => {
 
 app.delete('/api/brew-methods/:id', (req, res) => {
   try {
+    const id = req.params.id;
     const stmt = db.prepare('DELETE FROM brew_methods WHERE id = ?');
-    const result = stmt.run(req.params.id);
+    const result = stmt.run(id);
     if (result.changes === 0) return res.status(404).json({ error: 'Not found' });
+    deleteFromAllLocales('brew_methods', id);
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
