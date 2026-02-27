@@ -195,6 +195,41 @@ body {
   min-width: 280px;
 }
 
+.dashboard-translations-lang-multi {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  flex: 1 1 100%;
+}
+
+.dashboard-translations-lang-multi-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #444;
+}
+
+.dashboard-translations-lang-multi-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.dashboard-translations-lang-multi-list .dashboard-lang-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: #f5f5fc;
+  border: 1px solid #e0e0ff;
+  font-size: 0.9rem;
+}
+
+.dashboard-translations-lang-multi-list .dashboard-lang-check input {
+  margin: 0;
+}
+
 .dashboard-prompt-extra {
   margin-bottom: 1rem;
   display: flex;

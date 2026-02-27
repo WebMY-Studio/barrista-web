@@ -16,6 +16,8 @@ export function Dashboard() {
   const [downloadingAllImages, setDownloadingAllImages] = useState(false);
   const [importLang, setImportLang] = useState('en');
   const [translationLang, setTranslationLang] = useState('es');
+  const [selectedTranslationLangs, setSelectedTranslationLangs] = useState<string[]>([]);
+  const [currentTranslationLang, setCurrentTranslationLang] = useState<string | null>(null);
   const [translationBrewMethods, setTranslationBrewMethods] = useState(true);
   const [translationDrinks, setTranslationDrinks] = useState(true);
   const [translationCategories, setTranslationCategories] = useState(true);
@@ -38,6 +40,7 @@ export function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const translationProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const translationLogLineCountRef = useRef(0);
+  const translationTargetsInitializedRef = useRef(false);
   const imagesInputRef = useRef<HTMLInputElement>(null);
   const categoryImagesInputRef = useRef<HTMLInputElement>(null);
   const dishImagesInputRef = useRef<HTMLInputElement>(null);
@@ -130,8 +133,15 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (translationLanguages.length > 0 && !translationLanguages.some((l) => l.code === translationLang)) {
+    if (translationLanguages.length === 0) return;
+    // Ensure single-select value is valid (used only as fallback / legacy)
+    if (!translationLanguages.some((l) => l.code === translationLang)) {
       setTranslationLang(translationLanguages[0].code);
+    }
+    // Initialize multi-select targets only once on first load
+    if (!translationTargetsInitializedRef.current) {
+      setSelectedTranslationLangs(translationLanguages.map((l) => l.code));
+      translationTargetsInitializedRef.current = true;
     }
   }, [translationLanguages, translationLang]);
 
@@ -143,6 +153,12 @@ export function Dashboard() {
 
   const selectAll = () => setSelectedLangs(languages.map((l) => l.code));
   const selectNone = () => setSelectedLangs([]);
+
+  const toggleTranslationTargetLang = (code: string) => {
+    setSelectedTranslationLangs((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
+    );
+  };
 
   const handleExportDatabases = async () => {
     if (selectedLangs.length === 0) {
@@ -279,6 +295,10 @@ export function Dashboard() {
   };
 
   const handleStartTranslation = async () => {
+    if (selectedTranslationLangs.length === 0) {
+      alert('Select at least one target language.');
+      return;
+    }
     if (!translationBrewMethods && !translationDrinks && !translationCategories && !translationDishes) {
       alert('Select at least one: Brew methods, Drinks, Categories, Dishes');
       return;
@@ -286,6 +306,7 @@ export function Dashboard() {
     setTranslationProgress(null);
     setTranslating(true);
     setStoppingTranslation(false);
+    setCurrentTranslationLang(null);
     const entities = [
       translationBrewMethods && 'brew_methods',
       translationDrinks && 'drinks',
@@ -294,7 +315,7 @@ export function Dashboard() {
     ].filter(Boolean) as string[];
     const logStart = [
       `Translation started at ${new Date().toISOString()}`,
-      `Target language: ${translationLang}`,
+      `Target languages: ${selectedTranslationLangs.join(', ')}`,
       `Override existing: ${translationOverride}`,
       `Entities: ${entities.join(', ')}`,
       '',
@@ -318,29 +339,60 @@ export function Dashboard() {
       }
     }, 1500);
     try {
-      const result = await startTranslation({
-        lang: translationLang,
-        brewMethods: translationBrewMethods,
-        drinks: translationDrinks,
-        categories: translationCategories,
-        dishes: translationDishes,
-        overrideExisting: translationOverride,
-      });
-      if (translationProgressIntervalRef.current) {
-        clearInterval(translationProgressIntervalRef.current);
-        translationProgressIntervalRef.current = null;
+      for (const lang of selectedTranslationLangs) {
+        setCurrentTranslationLang(lang);
+        setTranslationRunLog((prev) =>
+          prev + (prev.endsWith('\n') ? '' : '\n') + `=== ${lang} ===`
+        );
+        const result = await startTranslation({
+          lang,
+          brewMethods: translationBrewMethods,
+          drinks: translationDrinks,
+          categories: translationCategories,
+          dishes: translationDishes,
+          overrideExisting: translationOverride,
+        });
+        if (translationProgressIntervalRef.current) {
+          clearInterval(translationProgressIntervalRef.current);
+          translationProgressIntervalRef.current = null;
+        }
+        setTranslationProgress((prev) => ({
+          ...prev,
+          done: true,
+          cancelled: result.cancelled,
+          saved: result.saved,
+          counts: result.counts,
+        }));
+        if (result.logLines && result.logLines.length > translationLogLineCountRef.current) {
+          const newLines = result.logLines.slice(translationLogLineCountRef.current);
+          translationLogLineCountRef.current = result.logLines.length;
+          setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + newLines.join('\n'));
+        }
+        await getAvailableLanguages().then(setLanguages);
+        const endMsg = result.cancelled
+          ? (result.saved ? 'Stopped. Results saved to DB.' : 'Stopped. Changes discarded.')
+          : 'Done.';
+        setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + endMsg);
+        if (result.cancelled) {
+          break;
+        }
+        // If we continue to next language, re-start polling for the next run
+        translationProgressIntervalRef.current = setInterval(async () => {
+          try {
+            const p = await getTranslationProgress();
+            if (p) {
+              setTranslationProgress(p);
+              if (p.logLines && p.logLines.length > translationLogLineCountRef.current) {
+                const newLines = p.logLines.slice(translationLogLineCountRef.current);
+                translationLogLineCountRef.current = p.logLines.length;
+                setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + newLines.join('\n'));
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }, 1500);
       }
-      setTranslationProgress((prev) => ({ ...prev, done: true, cancelled: result.cancelled, saved: result.saved, counts: result.counts }));
-      if (result.logLines && result.logLines.length > translationLogLineCountRef.current) {
-        const newLines = result.logLines.slice(translationLogLineCountRef.current);
-        translationLogLineCountRef.current = result.logLines.length;
-        setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + newLines.join('\n'));
-      }
-      await getAvailableLanguages().then(setLanguages);
-      const endMsg = result.cancelled
-        ? (result.saved ? 'Stopped. Results saved to DB.' : 'Stopped. Changes discarded.')
-        : 'Done.';
-      setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + endMsg);
     } catch (err) {
       console.error(err);
       const errMsg = err instanceof Error ? err.message : 'Translation failed';
@@ -351,6 +403,7 @@ export function Dashboard() {
         translationProgressIntervalRef.current = null;
       }
       setTranslating(false);
+      setCurrentTranslationLang(null);
     }
   };
 
@@ -731,23 +784,26 @@ export function Dashboard() {
               ))}
             </select>
           </label>
-          <label className="dashboard-translations-lang-label">
-            Language:
-            <select
-              value={translationLang}
-              onChange={(e) => setTranslationLang(e.target.value)}
-              disabled={translating}
-              className="dashboard-translations-select"
-            >
+          <div className="dashboard-translations-lang-multi">
+            <div className="dashboard-translations-lang-multi-label">Target languages:</div>
+            <div className="dashboard-translations-lang-multi-list">
               {translationLanguages.length === 0 ? (
-                <option value="">—</option>
+                <span className="form-hint">No translation languages configured.</span>
               ) : (
                 translationLanguages.map((l) => (
-                  <option key={l.code} value={l.code}>{l.label}</option>
+                  <label key={l.code} className="dashboard-lang-check">
+                    <input
+                      type="checkbox"
+                      checked={selectedTranslationLangs.includes(l.code)}
+                      onChange={() => toggleTranslationTargetLang(l.code)}
+                      disabled={translating}
+                    />
+                    <span>{l.label}</span>
+                  </label>
                 ))
               )}
-            </select>
-          </label>
+            </div>
+          </div>
           <label className="dashboard-lang-check">
             <input
               type="checkbox"
@@ -786,10 +842,12 @@ export function Dashboard() {
                   {translationProgress.cancelled
                     ? (translationProgress.saved ? 'Stopped. Results saved to DB. ' : 'Stopped. Changes discarded. ')
                     : 'Done. '}
+                  {currentTranslationLang ? `Language: ${currentTranslationLang}. ` : null}
                   Categories: {translationProgress.counts?.categories ?? 0}, Dishes: {translationProgress.counts?.dishes ?? 0}, Drinks: {translationProgress.counts?.drinks ?? 0}, Brew methods: {translationProgress.counts?.brewMethods ?? 0}
                 </>
               ) : translationProgress?.step ? (
                 <>
+                  {currentTranslationLang ? `Language: ${currentTranslationLang} · ` : null}
                   Translating: {translationProgress.step === 'categories' ? 'Categories' : translationProgress.step === 'dishes' ? 'Dishes' : translationProgress.step === 'drinks' ? 'Drinks' : 'Brew methods'}{' '}
                   {translationProgress.current ?? 0}/{(translationProgress.total ?? 0) - (translationProgress.skipped ?? 0)}
                   {translationProgress.lastId != null && (
