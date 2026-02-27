@@ -136,6 +136,10 @@ export async function translateArray(arr, targetLang) {
     } else if (item && typeof item === 'object' && item.name !== undefined) {
       slots.push({ kind: 'name', rest: item });
       strings.push(String(item.name));
+    } else if (item && typeof item === 'object' && (item.title !== undefined || item.volume !== undefined)) {
+      slots.push({ kind: 'ingredient', rest: item });
+      strings.push(String(item.title ?? '').trim());
+      strings.push(String(item.volume ?? '').trim());
     } else {
       slots.push({ kind: 'raw', value: item });
       strings.push(null);
@@ -147,6 +151,11 @@ export async function translateArray(arr, targetLang) {
   return slots.map((slot) => {
     if (slot.kind === 'raw') return slot.value;
     if (slot.kind === 'string') return translated[j++];
+    if (slot.kind === 'ingredient') {
+      const title = translated[j++];
+      const volume = translated[j++];
+      return { ...slot.rest, title, volume };
+    }
     return { ...slot.rest, name: translated[j++] };
   });
 }

@@ -842,7 +842,7 @@ app.post('/api/translate', async (req, res) => {
       }
       if (sourceDb) sourceDb.close();
       translationProgress = { ...translationProgress, done: true, cancelled: true, saved: err.saveResults, counts: translationProgress?.counts };
-      return res.json({ cancelled: true, saved: err.saveResults });
+      return res.json({ cancelled: true, saved: err.saveResults, counts: translationProgress?.counts });
     }
     console.error(err);
     translationProgress = null;
