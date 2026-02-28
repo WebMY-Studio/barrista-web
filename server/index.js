@@ -552,6 +552,40 @@ app.get('/api/download-all-images', (req, res) => {
   archive.finalize();
 });
 
+app.get('/api/images', (req, res) => {
+  try {
+    const files = fs.readdirSync(imagesDir).filter((f) => {
+      const p = join(imagesDir, f);
+      if (!fs.statSync(p).isFile()) return false;
+      const ext = f.slice(f.lastIndexOf('.')).toLowerCase();
+      return ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
+    });
+    res.json({ images: files.sort() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const imageFilenameRe = /^[a-zA-Z0-9_.-]+\.(jpg|jpeg|png|gif|webp)$/i;
+app.delete('/api/images/:filename', (req, res) => {
+  const raw = req.params.filename || '';
+  const filename = raw.replace(/\.\./g, '').replace(/[/\\]/g, '');
+  if (!imageFilenameRe.test(filename)) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
+  const filepath = join(imagesDir, filename);
+  if (!fs.existsSync(filepath) || !fs.statSync(filepath).isFile()) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  try {
+    fs.unlinkSync(filepath);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 function ensureTables(db) {
   db.exec(`
@@ -617,11 +651,15 @@ app.post('/api/translation-stop', (req, res) => {
 });
 
 app.post('/api/translate', async (req, res) => {
-  const { lang, brewMethods, drinks, categories, dishes, overrideExisting } = req.body || {};
-  const targetLang = typeof lang === 'string' ? lang.trim().toLowerCase() : '';
+  const { lang, langs, brewMethods, drinks, categories, dishes, overrideExisting } = req.body || {};
   const allowedCodes = getTranslationLanguages().map((x) => x.code);
-  if (!targetLang || !allowedCodes.includes(targetLang)) {
-    return res.status(400).json({ error: 'Invalid or missing lang. Configure languages in Translation languages.' });
+  const targetLangs = Array.isArray(langs) && langs.length > 0
+    ? langs.map((l) => (typeof l === 'string' ? l.trim().toLowerCase() : '')).filter((l) => l && allowedCodes.includes(l))
+    : typeof lang === 'string' && lang.trim()
+      ? [lang.trim().toLowerCase()]
+      : [];
+  if (targetLangs.length === 0) {
+    return res.status(400).json({ error: 'Invalid or missing lang/langs. Configure languages in Translation languages.' });
   }
   const doBrew = !!brewMethods;
   const doDrinks = !!drinks;
@@ -637,14 +675,11 @@ app.post('/api/translate', async (req, res) => {
   const RATES_SEC_PER_ITEM = { categories: 0.76, dishes: 3.3, drinks: 2.4, brew_methods: 10.7 };
   const BLOCK_LABELS = { categories: 'Categories', dishes: 'Dishes', drinks: 'Drinks', brew_methods: 'Brew methods' };
 
-  translationProgress = { step: 'starting', current: 0, total: 0, logLines: [], etaSeconds: null, lastId: null, lastItemMs: null };
+  translationProgress = { step: 'starting', current: 0, total: 0, logLines: [], etaSeconds: null, lastId: null, lastItemMs: null, currentLang: null };
   let sourceDb;
   let targetDb;
   try {
     sourceDb = new Database(sourcePath);
-    const targetPath = getDbPathForLang(targetLang);
-    targetDb = new Database(targetPath);
-    ensureTables(targetDb);
 
     const maybeStop = () => {
       if (translationStopRequested) {
@@ -654,8 +689,9 @@ app.post('/api/translate', async (req, res) => {
       }
     };
 
-    const counts = { categories: 0, dishes: 0, drinks: 0, brewMethods: 0 };
-    const blockResults = {};
+    let counts = { categories: 0, dishes: 0, drinks: 0, brewMethods: 0 };
+    let blockResults = {};
+    let lastCounts = { categories: 0, dishes: 0, drinks: 0, brewMethods: 0 };
 
     const setProgress = (step, current, total, extra = {}) => {
       const skipped = extra.skipped !== undefined ? extra.skipped : (translationProgress.skipped ?? 0);
@@ -669,6 +705,7 @@ app.post('/api/translate', async (req, res) => {
         total,
         skipped,
         etaSeconds,
+        currentLang: translationProgress.currentLang,
         lastId: extra.lastId !== undefined ? extra.lastId : translationProgress.lastId,
         lastItemMs: extra.lastItemMs !== undefined ? extra.lastItemMs : translationProgress.lastItemMs,
         counts: { ...counts },
@@ -696,7 +733,19 @@ app.post('/api/translate', async (req, res) => {
       }
     };
 
-    if (doCategories) {
+    for (const targetLang of targetLangs) {
+      translationProgress.logLines = translationProgress.logLines || [];
+      translationProgress.logLines.push(`=== ${targetLang} ===`);
+      translationProgress = { ...translationProgress, currentLang: targetLang };
+      maybeStop();
+
+      const targetPath = getDbPathForLang(targetLang);
+      targetDb = new Database(targetPath);
+      ensureTables(targetDb);
+      counts = { categories: 0, dishes: 0, drinks: 0, brewMethods: 0 };
+      blockResults = {};
+
+      if (doCategories) {
       targetDb.exec('BEGIN');
       maybeStop();
       const rows = sourceDb.prepare('SELECT * FROM categories').all();
@@ -852,11 +901,14 @@ app.post('/api/translate', async (req, res) => {
       targetDb.exec('COMMIT');
     }
 
+      targetDb.close();
+      lastCounts = { ...counts };
+    }
+
     const finalLogLines = translationProgress.logLines || [];
-    translationProgress = { ...translationProgress, done: true, counts };
+    translationProgress = { ...translationProgress, done: true, counts: lastCounts };
     sourceDb.close();
-    targetDb.close();
-    res.json({ ok: true, lang: targetLang, counts, blockResults, logLines: finalLogLines });
+    res.json({ ok: true, lang: targetLangs[targetLangs.length - 1], langs: targetLangs, counts: lastCounts, blockResults: blockResults, logLines: finalLogLines });
   } catch (err) {
     if (err instanceof TranslationStopError) {
       if (targetDb) {

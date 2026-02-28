@@ -301,6 +301,28 @@ export async function importBrewMethodImages(files: File[]): Promise<{ saved: nu
   return { saved: data.saved ?? 0, total: data.total ?? 0 };
 }
 
+/** URL for an image file in server data/images (e.g. drink_espresso.jpg). */
+export function getImageUrl(filename: string): string {
+  const base = getBase().replace(/\/$/, '');
+  const path = `/uploads/${encodeURIComponent(filename)}`;
+  return base ? `${base}${path}` : path;
+}
+
+/** List all image filenames in server data/images. */
+export async function listImages(): Promise<{ images: string[] }> {
+  const res = await fetchApi('/api/images');
+  return res.json();
+}
+
+/** Delete one image file by filename (e.g. drink_espresso.jpg). */
+export async function deleteImage(filename: string): Promise<void> {
+  const res = await fetchApi(`/api/images/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to delete image');
+  }
+}
+
 const getBase = () =>
   import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '';
 
@@ -422,7 +444,10 @@ export async function importJson(file: File, lang: string = 'en'): Promise<{ ok:
 }
 
 export type TranslationOptions = {
-  lang: string;
+  /** Single language (legacy) or omit if using langs */
+  lang?: string;
+  /** Target language codes to translate (server runs them in one request) */
+  langs?: string[];
   brewMethods: boolean;
   drinks: boolean;
   categories: boolean;
@@ -450,6 +475,7 @@ export type TranslationProgress = {
   done?: boolean;
   cancelled?: boolean;
   saved?: boolean;
+  currentLang?: string | null;
   counts?: { categories: number; dishes: number; drinks: number; brewMethods: number };
   logLines?: string[];
   etaSeconds?: number | null;
@@ -484,7 +510,7 @@ export async function startTranslation(opts: TranslationOptions): Promise<Transl
   const res = await fetchApi('/api/translate', {
     method: 'POST',
     body: JSON.stringify({
-      lang: opts.lang,
+      ...(opts.langs && opts.langs.length > 0 ? { langs: opts.langs } : { lang: opts.lang }),
       brewMethods: opts.brewMethods,
       drinks: opts.drinks,
       categories: opts.categories,

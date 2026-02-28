@@ -29,7 +29,7 @@ export function Dashboard() {
   const [translationRunLog, setTranslationRunLog] = useState<string>('');
   const [integrityLog, setIntegrityLog] = useState<string | null>(null);
   const [integrityLoading, setIntegrityLoading] = useState(false);
-  const [deleteLang, setDeleteLang] = useState('');
+  const [deleteLangs, setDeleteLangs] = useState<string[]>([]);
   const [deleting, setDeleting] = useState(false);
   const [promptExtra, setPromptExtra] = useState('');
   const [promptExtraSaving, setPromptExtraSaving] = useState(false);
@@ -160,9 +160,23 @@ export function Dashboard() {
     );
   };
 
+  const checkIntegrityForSelected = async (): Promise<{ ok: boolean; log: string }> => {
+    const { log } = await checkTranslationIntegrity();
+    if (log === 'All good') return { ok: true, log };
+    const translatedSelected = selectedLangs.filter((c) => c !== 'en');
+    if (translatedSelected.length === 0) return { ok: true, log };
+    const hasViolation = translatedSelected.some((code) => log.includes(`barrista_${code}.db:`));
+    return { ok: !hasViolation, log };
+  };
+
   const handleExportDatabases = async () => {
     if (selectedLangs.length === 0) {
       alert('Select at least one language.');
+      return;
+    }
+    const integrity = await checkIntegrityForSelected();
+    if (!integrity.ok) {
+      alert(`Integrity check failed for selected DB(s). Export blocked.\n\n${integrity.log}`);
       return;
     }
     setExporting('db');
@@ -181,6 +195,11 @@ export function Dashboard() {
   const handleExportJsons = async () => {
     if (selectedLangs.length === 0) {
       alert('Select at least one language.');
+      return;
+    }
+    const integrity = await checkIntegrityForSelected();
+    if (!integrity.ok) {
+      alert(`Integrity check failed for selected DB(s). Export blocked.\n\n${integrity.log}`);
       return;
     }
     setExporting('json');
@@ -339,60 +358,38 @@ export function Dashboard() {
       }
     }, 1500);
     try {
-      for (const lang of selectedTranslationLangs) {
-        setCurrentTranslationLang(lang);
-        setTranslationRunLog((prev) =>
-          prev + (prev.endsWith('\n') ? '' : '\n') + `=== ${lang} ===`
-        );
-        const result = await startTranslation({
-          lang,
-          brewMethods: translationBrewMethods,
-          drinks: translationDrinks,
-          categories: translationCategories,
-          dishes: translationDishes,
-          overrideExisting: translationOverride,
-        });
-        if (translationProgressIntervalRef.current) {
-          clearInterval(translationProgressIntervalRef.current);
-          translationProgressIntervalRef.current = null;
-        }
-        setTranslationProgress((prev) => ({
-          ...prev,
-          done: true,
-          cancelled: result.cancelled,
-          saved: result.saved,
-          counts: result.counts,
-        }));
-        if (result.logLines && result.logLines.length > translationLogLineCountRef.current) {
-          const newLines = result.logLines.slice(translationLogLineCountRef.current);
-          translationLogLineCountRef.current = result.logLines.length;
+      const result = await startTranslation({
+        langs: selectedTranslationLangs,
+        brewMethods: translationBrewMethods,
+        drinks: translationDrinks,
+        categories: translationCategories,
+        dishes: translationDishes,
+        overrideExisting: translationOverride,
+      });
+      if (translationProgressIntervalRef.current) {
+        clearInterval(translationProgressIntervalRef.current);
+        translationProgressIntervalRef.current = null;
+      }
+      setTranslationProgress((prev) => ({
+        ...prev,
+        done: true,
+        cancelled: result.cancelled,
+        saved: result.saved,
+        counts: result.counts,
+      }));
+      if (result.logLines && result.logLines.length > 0) {
+        const from = Math.min(translationLogLineCountRef.current, result.logLines.length);
+        const newLines = result.logLines.slice(from);
+        if (newLines.length > 0) {
           setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + newLines.join('\n'));
         }
-        await getAvailableLanguages().then(setLanguages);
-        const endMsg = result.cancelled
-          ? (result.saved ? 'Stopped. Results saved to DB.' : 'Stopped. Changes discarded.')
-          : 'Done.';
-        setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + endMsg);
-        if (result.cancelled) {
-          break;
-        }
-        // If we continue to next language, re-start polling for the next run
-        translationProgressIntervalRef.current = setInterval(async () => {
-          try {
-            const p = await getTranslationProgress();
-            if (p) {
-              setTranslationProgress(p);
-              if (p.logLines && p.logLines.length > translationLogLineCountRef.current) {
-                const newLines = p.logLines.slice(translationLogLineCountRef.current);
-                translationLogLineCountRef.current = p.logLines.length;
-                setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + newLines.join('\n'));
-              }
-            }
-          } catch {
-            // ignore
-          }
-        }, 1500);
+        translationLogLineCountRef.current = result.logLines.length;
       }
+      await getAvailableLanguages().then(setLanguages);
+      const endMsg = result.cancelled
+        ? (result.saved ? 'Stopped. Results saved to DB.' : 'Stopped. Changes discarded.')
+        : 'Done.';
+      setTranslationRunLog((prev) => prev + (prev.endsWith('\n') ? '' : '\n') + endMsg);
     } catch (err) {
       console.error(err);
       const errMsg = err instanceof Error ? err.message : 'Translation failed';
@@ -451,18 +448,26 @@ export function Dashboard() {
     }
   };
 
+  const toggleDeleteLang = (code: string) => {
+    setDeleteLangs((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
+    );
+  };
+
   const handleDeleteDatabase = async () => {
-    if (!deleteLang) return;
-    if (!confirm(`Delete database barrista_${deleteLang}.db? This cannot be undone.`)) return;
+    if (deleteLangs.length === 0) return;
+    if (!confirm(`Delete ${deleteLangs.length} database(s): ${deleteLangs.map((c) => `barrista_${c}.db`).join(', ')}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
-      await deleteDatabase(deleteLang);
+      for (const lang of deleteLangs) {
+        await deleteDatabase(lang);
+      }
       await getAvailableLanguages().then(setLanguages);
-      setDeleteLang('');
+      setDeleteLangs([]);
       setIntegrityLog(null);
     } catch (err) {
       console.error(err);
-      alert(err instanceof Error ? err.message : 'Failed to delete database');
+      alert(err instanceof Error ? err.message : 'Failed to delete database(s)');
     } finally {
       setDeleting(false);
     }
@@ -562,24 +567,24 @@ export function Dashboard() {
               </div>
               {translatedLangs.length > 0 && (
                 <div className="dashboard-delete-db">
-                  <label className="dashboard-delete-db-label">
-                    Delete translated DB:
-                    <select
-                      value={deleteLang}
-                      onChange={(e) => setDeleteLang(e.target.value)}
-                      disabled={deleting}
-                      className="dashboard-translations-select"
-                    >
-                      <option value="">— select —</option>
-                      {translatedLangs.map((l) => (
-                        <option key={l.code} value={l.code}>barrista_{l.code}.db</option>
-                      ))}
-                    </select>
-                  </label>
+                  <span className="dashboard-delete-db-label">Delete translated DB:</span>
+                  <div className="dashboard-delete-db-checkboxes">
+                    {translatedLangs.map((l) => (
+                      <label key={l.code} className="dashboard-lang-check">
+                        <input
+                          type="checkbox"
+                          checked={deleteLangs.includes(l.code)}
+                          onChange={() => toggleDeleteLang(l.code)}
+                          disabled={deleting}
+                        />
+                        <span>barrista_{l.code}.db</span>
+                      </label>
+                    ))}
+                  </div>
                   <button
                     type="button"
                     onClick={handleDeleteDatabase}
-                    disabled={deleting || !deleteLang}
+                    disabled={deleting || deleteLangs.length === 0}
                     className="btn-secondary"
                   >
                     {deleting ? <Loader size={16} className="spinner" /> : <Trash2 size={16} />}
@@ -842,12 +847,12 @@ export function Dashboard() {
                   {translationProgress.cancelled
                     ? (translationProgress.saved ? 'Stopped. Results saved to DB. ' : 'Stopped. Changes discarded. ')
                     : 'Done. '}
-                  {currentTranslationLang ? `Language: ${currentTranslationLang}. ` : null}
+                  {(translationProgress?.currentLang ?? currentTranslationLang) ? `Language: ${translationProgress?.currentLang ?? currentTranslationLang}. ` : null}
                   Categories: {translationProgress.counts?.categories ?? 0}, Dishes: {translationProgress.counts?.dishes ?? 0}, Drinks: {translationProgress.counts?.drinks ?? 0}, Brew methods: {translationProgress.counts?.brewMethods ?? 0}
                 </>
               ) : translationProgress?.step ? (
                 <>
-                  {currentTranslationLang ? `Language: ${currentTranslationLang} · ` : null}
+                  {(translationProgress?.currentLang ?? currentTranslationLang) ? `Language: ${translationProgress?.currentLang ?? currentTranslationLang} · ` : null}
                   Translating: {translationProgress.step === 'categories' ? 'Categories' : translationProgress.step === 'dishes' ? 'Dishes' : translationProgress.step === 'drinks' ? 'Drinks' : 'Brew methods'}{' '}
                   {translationProgress.current ?? 0}/{(translationProgress.total ?? 0) - (translationProgress.skipped ?? 0)}
                   {translationProgress.lastId != null && (
@@ -897,22 +902,22 @@ export function Dashboard() {
         </div>
       </div>
       <div className="dashboard-cards">
-        <Link to="/drinks" className="dashboard-card">
+        <Link to="drinks" className="dashboard-card">
           <Coffee size={32} />
           <span>Drinks</span>
           <p>Coffee and drink recipes</p>
         </Link>
-        <Link to="/dishes" className="dashboard-card">
+        <Link to="dishes" className="dashboard-card">
           <UtensilsCrossed size={32} />
           <span>Dishes</span>
           <p>Dish types and volumes</p>
         </Link>
-        <Link to="/categories" className="dashboard-card">
+        <Link to="categories" className="dashboard-card">
           <Tags size={32} />
           <span>Categories</span>
           <p>Drink categories</p>
         </Link>
-        <Link to="/brew-methods" className="dashboard-card">
+        <Link to="brew-methods" className="dashboard-card">
           <Coffee size={32} />
           <span>Brew methods</span>
           <p>Coffee brewing methods</p>
