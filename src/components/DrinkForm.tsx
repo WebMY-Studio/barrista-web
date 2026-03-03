@@ -104,6 +104,11 @@ export const DrinkForm: FC<DrinkFormProps> = ({ drink, availableCategories, avai
   const handlePhotoChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !formData.id) return;
+    if (file.type !== 'image/jpeg') {
+      alert('Only JPG is supported.');
+      e.target.value = '';
+      return;
+    }
     setUploadingPhoto(true);
     try {
       await uploadDrinkPhoto(formData.id, file);
@@ -153,7 +158,7 @@ export const DrinkForm: FC<DrinkFormProps> = ({ drink, availableCategories, avai
             <input
               ref={photoInputRef}
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept="image/jpeg"
               className="drink-form-photo-input"
               onChange={handlePhotoChange}
               disabled={uploadingPhoto}

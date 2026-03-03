@@ -127,10 +127,10 @@ export async function downloadAllImages(): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
-/** URL for category photo (server serves category_<id>.png from /uploads). Use img onError for placeholder. */
+/** URL for category photo (server serves category_<id>.jpg from /uploads). Use img onError for placeholder. */
 export function getCategoryImageUrl(id: string): string {
   const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
-  const path = `/uploads/category_${encodeURIComponent(id)}.png`;
+  const path = `/uploads/category_${encodeURIComponent(id)}.jpg`;
   return base ? `${base}${path}` : path;
 }
 
@@ -152,7 +152,7 @@ export async function uploadCategoryPhoto(categoryId: string, file: File): Promi
   if (!res.ok) throw new Error(data.error || 'Upload failed');
 }
 
-/** Import multiple category images (filenames must be category_<id>.png or .jpg). */
+/** Import multiple category images (filenames must be category_<id>.jpg). */
 export async function importCategoryImages(files: File[]): Promise<{ saved: number; total: number }> {
   const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
   const form = new FormData();
@@ -185,10 +185,10 @@ export async function deleteDish(id: string): Promise<void> {
   await fetchApi(`/api/dishes/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
-/** URL for dish photo (server serves dish_<id>.png from /uploads). Use img onError for placeholder. */
+/** URL for dish photo (server serves dish_<id>.jpg from /uploads). Use img onError for placeholder. */
 export function getDishImageUrl(id: string): string {
   const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
-  const path = `/uploads/dish_${encodeURIComponent(id)}.png`;
+  const path = `/uploads/dish_${encodeURIComponent(id)}.jpg`;
   return base ? `${base}${path}` : path;
 }
 
@@ -210,7 +210,7 @@ export async function uploadDishPhoto(dishId: string, file: File): Promise<void>
   if (!res.ok) throw new Error(data.error || 'Upload failed');
 }
 
-/** Import multiple dish images (filenames must be dish_<id>.png or .jpg). */
+/** Import multiple dish images (filenames must be dish_<id>.jpg). */
 export async function importDishImages(files: File[]): Promise<{ saved: number; total: number }> {
   const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
   const form = new FormData();
@@ -256,10 +256,10 @@ export async function deleteBrewMethod(id: string): Promise<void> {
   await fetchApi(`/api/brew-methods/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
-/** URL for brew method photo (server serves brew_<id>.png from /uploads). */
+/** URL for brew method photo (server serves brew_<id>.jpg from /uploads). */
 export function getBrewMethodImageUrl(id: string): string {
   const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
-  const path = `/uploads/brew_${encodeURIComponent(id)}.png`;
+  const path = `/uploads/brew_${encodeURIComponent(id)}.jpg`;
   return base ? `${base}${path}` : path;
 }
 
@@ -281,7 +281,7 @@ export async function uploadBrewMethodPhoto(methodId: string, file: File): Promi
   if (!res.ok) throw new Error(data.error || 'Upload failed');
 }
 
-/** Import multiple brew method images (filenames must be brew_<id>.png or .jpg). */
+/** Import multiple brew method images (filenames must be brew_<id>.jpg). */
 export async function importBrewMethodImages(files: File[]): Promise<{ saved: number; total: number }> {
   const base = (import.meta.env.DEV ? (import.meta.env.VITE_API_URL || 'http://localhost:3001') : '').replace(/\/$/, '');
   const form = new FormData();

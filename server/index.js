@@ -259,6 +259,7 @@ app.post('/api/drinks/:id/photo', upload.single('photo'), (req, res) => {
   if (!req.file || !req.file.buffer) {
     return res.status(400).json({ error: 'No photo uploaded' });
   }
+  if (req.file.mimetype !== 'image/jpeg') return res.status(400).json({ error: 'Only JPG is supported' });
   const filename = `drink_${id}.jpg`;
   const filepath = join(imagesDir, filename);
   try {
@@ -270,13 +271,14 @@ app.post('/api/drinks/:id/photo', upload.single('photo'), (req, res) => {
   }
 });
 
-const drinkImageNameRe = /^drink_([a-zA-Z0-9_.-]+)\.(jpg|jpeg|png)$/i;
+const drinkImageNameRe = /^drink_([a-zA-Z0-9_.-]+)\.(jpg|jpeg)$/i;
 app.post('/api/import-drink-images', upload.array('images', 100), (req, res) => {
   const files = req.files || [];
   let saved = 0;
   for (const f of files) {
     const m = f.originalname && f.originalname.match(drinkImageNameRe);
     if (!m) continue;
+    if (f.mimetype !== 'image/jpeg') continue;
     const filename = `drink_${m[1]}.jpg`;
     const filepath = join(imagesDir, filename);
     try {
@@ -330,7 +332,8 @@ app.post('/api/dishes/:id/photo', upload.single('photo'), (req, res) => {
   const id = rawId.replace(/[^a-zA-Z0-9_-]/g, '');
   if (!id) return res.status(400).json({ error: 'Invalid dish id' });
   if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'No photo uploaded' });
-  const filename = `dish_${id}.png`;
+  if (req.file.mimetype !== 'image/jpeg') return res.status(400).json({ error: 'Only JPG is supported' });
+  const filename = `dish_${id}.jpg`;
   try {
     fs.writeFileSync(join(imagesDir, filename), req.file.buffer);
     res.json({ ok: true, filename });
@@ -340,14 +343,15 @@ app.post('/api/dishes/:id/photo', upload.single('photo'), (req, res) => {
   }
 });
 
-const dishImageNameRe = /^dish_([a-zA-Z0-9_.-]+)\.(jpg|jpeg|png)$/i;
+const dishImageNameRe = /^dish_([a-zA-Z0-9_.-]+)\.(jpg|jpeg)$/i;
 app.post('/api/import-dish-images', upload.array('images', 100), (req, res) => {
   const files = req.files || [];
   let saved = 0;
   for (const f of files) {
     const m = f.originalname && f.originalname.match(dishImageNameRe);
     if (!m) continue;
-    const filename = `dish_${m[1]}.png`;
+    if (f.mimetype !== 'image/jpeg') continue;
+    const filename = `dish_${m[1]}.jpg`;
     try {
       fs.writeFileSync(join(imagesDir, filename), f.buffer);
       saved++;
@@ -406,7 +410,8 @@ app.post('/api/categories/:id/photo', upload.single('photo'), (req, res) => {
   const id = rawId.replace(/[^a-zA-Z0-9_-]/g, '');
   if (!id) return res.status(400).json({ error: 'Invalid category id' });
   if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'No photo uploaded' });
-  const filename = `category_${id}.png`;
+  if (req.file.mimetype !== 'image/jpeg') return res.status(400).json({ error: 'Only JPG is supported' });
+  const filename = `category_${id}.jpg`;
   try {
     fs.writeFileSync(join(imagesDir, filename), req.file.buffer);
     res.json({ ok: true, filename });
@@ -484,7 +489,8 @@ app.post('/api/brew-methods/:id/photo', upload.single('photo'), (req, res) => {
   const id = rawId.replace(/[^a-zA-Z0-9_-]/g, '');
   if (!id) return res.status(400).json({ error: 'Invalid brew method id' });
   if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'No photo uploaded' });
-  const filename = `brew_${id}.png`;
+  if (req.file.mimetype !== 'image/jpeg') return res.status(400).json({ error: 'Only JPG is supported' });
+  const filename = `brew_${id}.jpg`;
   try {
     fs.writeFileSync(join(imagesDir, filename), req.file.buffer);
     res.json({ ok: true, filename });
@@ -494,14 +500,15 @@ app.post('/api/brew-methods/:id/photo', upload.single('photo'), (req, res) => {
   }
 });
 
-const brewMethodImageNameRe = /^brew_([a-zA-Z0-9_.-]+)\.(jpg|jpeg|png)$/i;
+const brewMethodImageNameRe = /^brew_([a-zA-Z0-9_.-]+)\.(jpg|jpeg)$/i;
 app.post('/api/import-brew-method-images', upload.array('images', 100), (req, res) => {
   const files = req.files || [];
   let saved = 0;
   for (const f of files) {
     const m = f.originalname && f.originalname.match(brewMethodImageNameRe);
     if (!m) continue;
-    const filename = `brew_${m[1]}.png`;
+    if (f.mimetype !== 'image/jpeg') continue;
+    const filename = `brew_${m[1]}.jpg`;
     try {
       fs.writeFileSync(join(imagesDir, filename), f.buffer);
       saved++;
@@ -512,14 +519,15 @@ app.post('/api/import-brew-method-images', upload.array('images', 100), (req, re
   res.json({ ok: true, saved, total: files.length });
 });
 
-const categoryImageNameRe = /^category_([a-zA-Z0-9_.-]+)\.(jpg|jpeg|png)$/i;
+const categoryImageNameRe = /^category_([a-zA-Z0-9_.-]+)\.(jpg|jpeg)$/i;
 app.post('/api/import-category-images', upload.array('images', 100), (req, res) => {
   const files = req.files || [];
   let saved = 0;
   for (const f of files) {
     const m = f.originalname && f.originalname.match(categoryImageNameRe);
     if (!m) continue;
-    const filename = `category_${m[1]}.png`;
+    if (f.mimetype !== 'image/jpeg') continue;
+    const filename = `category_${m[1]}.jpg`;
     try {
       fs.writeFileSync(join(imagesDir, filename), f.buffer);
       saved++;

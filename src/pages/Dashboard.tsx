@@ -227,7 +227,7 @@ export function Dashboard() {
     setImportingBrewMethodImages(true);
     try {
       const { saved, total } = await importBrewMethodImages(files);
-      alert(`Imported ${saved} of ${total} images. Use filenames brew_<id>.png`);
+      alert(`Imported ${saved} of ${total} images. Use filenames brew_<id>.jpg`);
     } catch (err) {
       console.error(err);
       alert(err instanceof Error ? err.message : 'Failed to import brew method images');
@@ -243,7 +243,7 @@ export function Dashboard() {
     setImportingDishImages(true);
     try {
       const { saved, total } = await importDishImages(files);
-      alert(`Imported ${saved} of ${total} images. Use filenames dish_<id>.png`);
+      alert(`Imported ${saved} of ${total} images. Use filenames dish_<id>.jpg`);
     } catch (err) {
       console.error(err);
       alert(err instanceof Error ? err.message : 'Failed to import dish images');
@@ -271,7 +271,7 @@ export function Dashboard() {
     setImportingCategoryImages(true);
     try {
       const { saved, total } = await importCategoryImages(files);
-      alert(`Imported ${saved} of ${total} images. Use filenames category_<id>.png`);
+      alert(`Imported ${saved} of ${total} images. Use filenames category_<id>.jpg`);
     } catch (err) {
       console.error(err);
       alert(err instanceof Error ? err.message : 'Failed to import category images');

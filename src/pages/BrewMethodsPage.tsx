@@ -57,6 +57,11 @@ export function BrewMethodsPage() {
   const handlePhotoChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !form.id) return;
+    if (file.type !== 'image/jpeg') {
+      alert('Only JPG is supported.');
+      e.target.value = '';
+      return;
+    }
     setUploadingPhoto(true);
     try {
       await uploadBrewMethodPhoto(form.id, file);
@@ -162,7 +167,7 @@ export function BrewMethodsPage() {
                   <input
                     ref={photoInputRef}
                     type="file"
-                    accept="image/jpeg,image/png,image/webp"
+                    accept="image/jpeg"
                     className="drink-form-photo-input"
                     onChange={handlePhotoChange}
                     disabled={uploadingPhoto}
