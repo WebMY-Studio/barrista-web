@@ -877,6 +877,14 @@ body {
   gap: 0.35rem;
 }
 
+.drink-translation-preview {
+  padding: 0.75rem 0.9rem;
+  background: #f8f9ff;
+  border-radius: 6px;
+  border: 1px solid #e0e4ff;
+  font-size: 0.9rem;
+}
+
 .ingredients-list,
 .instructions-list {
   display: flex;
@@ -1221,6 +1229,12 @@ body {
 
 .images-list-delete {
   flex-shrink: 0;
+}
+
+.images-list-meta {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.8rem;
+  color: #777;
 }
 
 .page-projects h2 {

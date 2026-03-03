@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type FC, type FormEvent, type ChangeEvent } from 'react';
 import { Drink, Ingredient } from '../types';
 import { Plus, X, Save, Upload, Loader } from 'lucide-react';
-import { getDrinkImageUrl, uploadDrinkPhoto } from '../services/api';
+import { getDrinkImageUrl, uploadDrinkPhoto, getAvailableLanguages, getDrinkInLanguage, type LanguageOption } from '../services/api';
 
 interface CategoryOption {
   id: string;
@@ -29,6 +29,11 @@ export const DrinkForm: FC<DrinkFormProps> = ({ drink, availableCategories, avai
   const [photoKey, setPhotoKey] = useState(0);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const [viewLangs, setViewLangs] = useState<LanguageOption[]>([]);
+  const [viewLang, setViewLang] = useState<string>('en');
+  const [viewDrink, setViewDrink] = useState<Drink | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewError, setViewError] = useState<string | null>(null);
 
   const [formData, setFormData] = useState<Drink>({
     id: drink?.id || '',
@@ -48,6 +53,38 @@ export const DrinkForm: FC<DrinkFormProps> = ({ drink, availableCategories, avai
       setFormData(drink);
     }
   }, [drink]);
+
+  useEffect(() => {
+    getAvailableLanguages()
+      .then((langs) => setViewLangs(langs.length ? langs : [{ code: 'en' }]))
+      .catch((err) => console.error(err));
+  }, []);
+
+  useEffect(() => {
+    if (!formData.id || !viewLang) {
+      setViewDrink(null);
+      setViewError(null);
+      return;
+    }
+    setViewLoading(true);
+    setViewError(null);
+    getDrinkInLanguage(formData.id, viewLang)
+      .then((d) => {
+        if (!d) {
+          setViewDrink(null);
+          setViewError('No translation for this drink in selected language.');
+        } else {
+          setViewDrink(d);
+          setViewError(null);
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        setViewDrink(null);
+        setViewError(err instanceof Error ? err.message : 'Failed to load translation');
+      })
+      .finally(() => setViewLoading(false));
+  }, [formData.id, viewLang]);
 
   const handleAddIngredient = () => {
     if (newIngredient.title && newIngredient.volume) {
@@ -124,6 +161,23 @@ export const DrinkForm: FC<DrinkFormProps> = ({ drink, availableCategories, avai
 
   return (
     <form onSubmit={handleSubmit} className="drink-form">
+      <div className="form-group">
+        <label>View language:</label>
+        <select
+          value={viewLang}
+          onChange={(e) => setViewLang(e.target.value)}
+          className="dashboard-translations-select"
+        >
+          {viewLangs.length === 0 ? (
+            <option value="en">en</option>
+          ) : (
+            viewLangs.map((l) => (
+              <option key={l.code} value={l.code}>{l.code}</option>
+            ))
+          )}
+        </select>
+      </div>
+
       <div className="form-group">
         <label>Drink ID:</label>
         <input
@@ -272,6 +326,45 @@ export const DrinkForm: FC<DrinkFormProps> = ({ drink, availableCategories, avai
           </button>
         </div>
       </div>
+
+      {formData.id && (
+        <div className="form-group">
+          <label>Preview in selected language:</label>
+          <div className="drink-translation-preview">
+            {viewLoading ? (
+              <span><Loader size={16} className="spinner" /> Loading…</span>
+            ) : viewError ? (
+              <span className="form-hint">{viewError}</span>
+            ) : viewDrink ? (
+              <div>
+                <div><strong>Title:</strong> {viewDrink.title}</div>
+                {viewDrink.ingredients?.length > 0 && (
+                  <div>
+                    <strong>Ingredients:</strong>
+                    <ul>
+                      {viewDrink.ingredients.map((ing, i) => (
+                        <li key={i}>{ing.title} {ing.volume && `(${ing.volume})`}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {viewDrink.instructions?.length > 0 && (
+                  <div>
+                    <strong>Instructions:</strong>
+                    <ol>
+                      {viewDrink.instructions.map((step, i) => (
+                        <li key={i}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <span className="form-hint">Select a language to preview translation.</span>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="form-group">
         <label>Categories (select from existing):</label>

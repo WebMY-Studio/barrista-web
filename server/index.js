@@ -204,6 +204,41 @@ app.get('/api/drinks', (req, res) => {
   }
 });
 
+app.get('/api/drinks/:id', (req, res) => {
+  const id = req.params.id;
+  const langParam = typeof req.query.lang === 'string' ? req.query.lang.trim().toLowerCase() : '';
+  const lang = langParam || 'en';
+  try {
+    const path = getDbPathForLang(lang);
+    if (!fs.existsSync(path)) {
+      return res.status(404).json({ error: 'Database not found for this language' });
+    }
+    const langDb = new Database(path);
+    try {
+      ensureTables(langDb);
+      const row = langDb.prepare('SELECT * FROM drinks WHERE id = ?').get(id);
+      if (!row) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      const drink = sanitizeDrink({
+        id: row.id,
+        title: row.title,
+        ingredients: JSON.parse(row.ingredients || '[]'),
+        instructions: JSON.parse(row.instructions || '[]'),
+        dishId: row.dish_id,
+        portionsAmount: row.portions_amount,
+        categories: JSON.parse(row.categories || '[]'),
+      });
+      return res.json({ ...drink, lang });
+    } finally {
+      langDb.close();
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/drinks', (req, res) => {
   try {
     const d = sanitizeDrink(req.body);

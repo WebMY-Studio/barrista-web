@@ -49,6 +49,15 @@ export async function getAllDrinks(): Promise<Drink[]> {
   return res.json();
 }
 
+export async function getDrinkInLanguage(id: string, lang: string): Promise<Drink | null> {
+  const res = await fetchApi(`/api/drinks/${encodeURIComponent(id)}?lang=${encodeURIComponent(lang)}`);
+  if (res.status === 404) {
+    return null;
+  }
+  const data = await res.json();
+  return data as Drink;
+}
+
 export async function saveDrink(drink: Drink): Promise<void> {
   await fetchApi('/api/drinks', {
     method: 'POST',
