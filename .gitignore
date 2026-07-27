@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 server/data
+# Production data volume (docker-compose mounts ./data into the container)
+/data
 database
 *.db
 .env
