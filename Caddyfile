@@ -1,9 +1,9 @@
 {$SITE_ADDRESS} {
 	encode gzip
 
-	# Menu images are immutable once uploaded — cache hard to cut egress.
-	@uploads path /uploads/*
-	header @uploads Cache-Control "public, max-age=31536000, immutable"
-
+	# No Cache-Control override for /uploads: image URLs are derived from row ids
+	# (drink_arab.jpg) and get overwritten when a photo is replaced, so the
+	# max-age=0 express.static already sends is what we want — the browser
+	# revalidates and a 304 costs ~200 bytes.
 	reverse_proxy app:3001
 }
